@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Junker Trader Prototype</title>
+  <style>
+    body { font-family: monospace; margin: 12px; background: #f4f4f4; }
+    h1, h2, h3 { margin: 0 0 8px 0; }
+    .topbar { margin-bottom: 12px; padding: 8px; background: #fff; border: 1px solid #ccc; }
+    .panel { display: none; background: #fff; border: 1px solid #ccc; padding: 12px; margin-bottom: 10px; }
+    .panel.active { display: block; }
+    .card { border: 1px solid #aaa; padding: 8px; margin-bottom: 8px; background: #fafafa; }
+    button { margin: 4px 4px 4px 0; }
+    .log { white-space: pre-line; background: #111; color: #0f0; padding: 8px; min-height: 120px; }
+    .small { color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Junker Trader Prototype</h1>
+
+  <div class="topbar" id="topbar"></div>
+
+  <section id="market-panel" class="panel active">
+    <h2>Market</h2>
+    <div id="market-cars"></div>
+    <button id="next-day-btn">Skip Day</button>
+    <p class="small">Pick a car to start negotiation. You can only buy one car per day.</p>
+  </section>
+
+  <section id="negotiation-panel" class="panel">
+    <h2>Negotiation</h2>
+    <div id="negotiation-content"></div>
+    <button id="offer-lowball">Lowball</button>
+    <button id="offer-fair">Fair Offer</button>
+    <button id="offer-asking">Pay Asking</button>
+    <button id="walk-away">Walk Away</button>
+  </section>
+
+  <section id="garage-panel" class="panel">
+    <h2>Garage</h2>
+    <div id="garage-content"></div>
+    <div id="repair-actions"></div>
+    <button id="inspect-btn">Inspect</button>
+    <button id="to-sale-btn">List Car For Sale</button>
+  </section>
+
+  <section id="sale-panel" class="panel">
+    <h2>Sale Result</h2>
+    <div id="sale-content"></div>
+    <button id="continue-btn">Continue</button>
+  </section>
+
+  <section>
+    <h3>Event Log</h3>
+    <div id="event-log" class="log"></div>
+  </section>
+
+  <script src="game.js"></script>
+</body>
+</html>

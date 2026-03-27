@@ -144,6 +144,10 @@ const el = {
   repairActions: document.getElementById("repair-actions"),
   salePanel: document.getElementById("sale-panel"),
   saleContent: document.getElementById("sale-content"),
+  counterofferPanel: document.getElementById("counteroffer-panel"),
+  counterofferSlider: document.getElementById("counteroffer-slider"),
+  counterofferSliderLabel: document.getElementById("counteroffer-slider-label"),
+  counterofferBtn: document.getElementById("counteroffer-btn"),
   log: document.getElementById("event-log"),
   dealHistory: document.getElementById("deal-history"),
   runLogLink: document.getElementById("run-log-link"),
@@ -735,6 +739,24 @@ function updateNegotiationButtons() {
   el.offerAsking.textContent = `Pay Asking (${fmt(car.askingPrice)})`;
 }
 
+function getCounterofferAmount() {
+  if (!state.pendingSale) {
+    return 0;
+  }
+  const ratio = Number(el.counterofferSlider.value) / 100;
+  return Math.round(state.pendingSale.finalPrice * ratio);
+}
+
+function updateCounterofferLabel() {
+  if (!state.pendingSale) {
+    el.counterofferSliderLabel.textContent = "No buyer offer to counter.";
+    return;
+  }
+  const amount = getCounterofferAmount();
+  const pct = Number(el.counterofferSlider.value);
+  el.counterofferSliderLabel.textContent = `Counter: ${fmt(amount)} (${pct}% of buyer offer ${fmt(state.pendingSale.finalPrice)})`;
+}
+
 function attemptOffer(type, customOffer = null) {
   const car = state.selectedCar;
   if (!car) {
@@ -1197,9 +1219,74 @@ function attemptSale(priceMode, customMultiplier = null) {
 
   el.acceptSaleBtn.style.display = state.pendingSale ? "inline-block" : "none";
   el.rejectSaleBtn.style.display = state.pendingSale ? "inline-block" : "none";
+  el.counterofferPanel.style.display = state.pendingSale ? "block" : "none";
+  if (state.pendingSale) {
+    el.counterofferSlider.value = "105";
+    updateCounterofferLabel();
+  }
   el.continueBtn.disabled = Boolean(state.pendingSale);
   renderTopbar();
   showPanel(el.salePanel);
+}
+
+function attemptCounterOffer() {
+  const pending = state.pendingSale;
+  if (!pending) {
+    return;
+  }
+  const car = state.inventory.find((c) => c.id === pending.carId);
+  if (!car) {
+    state.pendingSale = null;
+    el.counterofferPanel.style.display = "none";
+    return;
+  }
+
+  const buyer = pending.buyer;
+  const counter = getCounterofferAmount();
+  const increase = Math.max(0, counter - pending.finalPrice);
+  const increaseRatio = increase / Math.max(1, pending.finalPrice);
+
+  if (counter <= pending.finalPrice) {
+    pending.finalPrice = counter;
+    updateCounterofferLabel();
+    log(`Counteroffer lowered to ${fmt(counter)} for ${car.name}.`);
+    trackAction("counteroffer_lowered", { carId: car.id, name: car.name, buyer: buyer.name, counter }, true);
+    return;
+  }
+
+  const acceptChance = clamp(
+    0.62 +
+      (buyer.tolerance - 1) * 0.55 +
+      buyer.haggleChance * 0.16 -
+      increaseRatio * 1.55,
+    0.03,
+    0.95
+  );
+
+  if (Math.random() < acceptChance) {
+    pending.finalPrice = counter;
+    log(`${buyer.name} accepted your counteroffer: ${fmt(counter)} for ${car.name}.`);
+    trackAction("counteroffer_accept", { carId: car.id, name: car.name, buyer: buyer.name, counter, acceptChance }, true);
+    updateCounterofferLabel();
+    return;
+  }
+
+  const walkChance = clamp(0.12 + increaseRatio * 1.2 - buyer.haggleChance * 0.22, 0.04, 0.9);
+  if (Math.random() < walkChance) {
+    state.pendingSale = null;
+    el.counterofferPanel.style.display = "none";
+    el.acceptSaleBtn.style.display = "none";
+    el.rejectSaleBtn.style.display = "none";
+    el.continueBtn.disabled = false;
+    log(`${buyer.name} walked away from ${car.name} after your counteroffer.`);
+    trackAction("counteroffer_walkaway", { carId: car.id, name: car.name, buyer: buyer.name, counter, walkChance }, true);
+    renderGarage();
+    showPanel(el.garagePanel);
+    return;
+  }
+
+  log(`${buyer.name} rejected counteroffer ${fmt(counter)}. Original offer ${fmt(pending.finalPrice)} still stands.`);
+  trackAction("counteroffer_reject", { carId: car.id, name: car.name, buyer: buyer.name, counter, acceptChance }, true);
 }
 
 function resolvePendingSale(accept) {
@@ -1225,6 +1312,7 @@ function resolvePendingSale(accept) {
     }, true);
     log(`Rejected ${pending.buyer.name} offer ${fmt(pending.finalPrice)} for ${car.name}.`);
     state.pendingSale = null;
+    el.counterofferPanel.style.display = "none";
     el.acceptSaleBtn.style.display = "none";
     el.rejectSaleBtn.style.display = "none";
     el.continueBtn.disabled = false;
@@ -1274,6 +1362,7 @@ function resolvePendingSale(accept) {
   }, true);
   log(`${pending.buyer.name} deal accepted: ${car.name} sold for ${fmt(pending.finalPrice)}.`);
   state.pendingSale = null;
+  el.counterofferPanel.style.display = "none";
   el.acceptSaleBtn.style.display = "none";
   el.rejectSaleBtn.style.display = "none";
   el.continueBtn.disabled = false;
@@ -1787,6 +1876,15 @@ el.sellJunkyardBtn.addEventListener("click", () => {
   trackAction("ui_click", { control: "sell-junkyard-btn" }, true);
   sellSelectedToJunkyard();
 });
+el.counterofferSlider.addEventListener("input", () => {
+  trackAction("ui_input", { control: "counteroffer-slider", value: Number(el.counterofferSlider.value) }, true);
+  updateCounterofferLabel();
+});
+el.counterofferBtn.addEventListener("click", () => {
+  const counter = getCounterofferAmount();
+  trackAction("ui_click", { control: "counteroffer-btn", counter }, true);
+  attemptCounterOffer();
+});
 el.acceptSaleBtn.addEventListener("click", () => {
   trackAction("ui_click", { control: "accept-sale-btn" }, true);
   resolvePendingSale(true);
@@ -1804,6 +1902,7 @@ el.continueBtn.addEventListener("click", () => {
 // ==== Init ====
 function init() {
   syncSliderRangesFromConfig();
+  el.counterofferPanel.style.display = "none";
   el.acceptSaleBtn.style.display = "none";
   el.rejectSaleBtn.style.display = "none";
   el.continueBtn.disabled = false;

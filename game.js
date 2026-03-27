@@ -86,8 +86,11 @@ const SELLER_PERSONALITIES = [
   { name: "Stubborn", patience: 1.25 }
 ];
 
+const MECHANICAL_FAULTS = new Set(["engine", "transmission", "tires"]);
+
 // ==== Game State ====
 const state = {
+  runStartedAt: new Date().toISOString(),
   day: 1,
   money: CONFIG.startingMoney,
   totalSpent: 0,
@@ -100,13 +103,16 @@ const state = {
   buyerQueue: [],
   buyerServedToday: false,
   saleHistory: [],
+  completedDeals: [],
+  actions: [],
   logLines: [],
   runOver: false,
   dailyEvent: null,
   series: {
     money: [],
     spent: [],
-    profit: []
+    profit: [],
+    balanceDelta: []
   }
 };
 
@@ -125,6 +131,9 @@ const el = {
   salePanel: document.getElementById("sale-panel"),
   saleContent: document.getElementById("sale-content"),
   log: document.getElementById("event-log"),
+  dealHistory: document.getElementById("deal-history"),
+  exportDataBtn: document.getElementById("export-data-btn"),
+  exportStatus: document.getElementById("export-status"),
   moneyGraph: document.getElementById("money-graph"),
   spentGraph: document.getElementById("spent-graph"),
   profitGraph: document.getElementById("profit-graph"),
@@ -158,10 +167,23 @@ function fmt(n) {
   return `$${Math.round(n).toLocaleString()}`;
 }
 
+function balanceDelta() {
+  return state.money - CONFIG.startingMoney;
+}
+
+function trackAction(type, data = {}) {
+  state.actions.push({
+    t: new Date().toISOString(),
+    day: state.day,
+    type,
+    ...data
+  });
+}
+
 function log(msg) {
   state.logLines.unshift(`[Day ${state.day}] ${msg}`);
-  state.logLines = state.logLines.slice(0, 20);
   el.log.textContent = state.logLines.join("\n");
+  trackAction("log", { msg });
 }
 
 function showPanel(panel) {
@@ -220,7 +242,7 @@ function carComparableData(car) {
   };
 }
 
-function notebookEstimate(car) {
+function notebookEstimateRange(car) {
   if (state.saleHistory.length < CONFIG.notebook.minSamplesForEstimate) {
     return null;
   }
@@ -228,6 +250,7 @@ function notebookEstimate(car) {
   const probe = carComparableData(car);
   let weightedSum = 0;
   let totalWeight = 0;
+  const weightedPrices = [];
 
   state.saleHistory.forEach((entry) => {
     const namePenalty = entry.name === probe.name ? 0 : 1.2;
@@ -240,12 +263,34 @@ function notebookEstimate(car) {
 
     weightedSum += entry.finalPrice * weight;
     totalWeight += weight;
+    weightedPrices.push({ price: entry.finalPrice, weight });
   });
 
   if (totalWeight <= 0) {
     return null;
   }
-  return weightedSum / totalWeight;
+
+  const mean = weightedSum / totalWeight;
+  let variance = 0;
+  weightedPrices.forEach((x) => {
+    variance += ((x.price - mean) ** 2) * x.weight;
+  });
+  variance /= totalWeight;
+
+  const stdDev = Math.sqrt(variance);
+  const sampleCount = state.saleHistory.length;
+  const confidence = clamp(sampleCount / 24, 0.08, 0.98);
+  const slowConvergeFactor = clamp(1.8 - Math.log(sampleCount + 1) * 0.28, 0.8, 1.8);
+  const minHalfRange = 280 * slowConvergeFactor;
+  const halfRange = Math.max(minHalfRange, stdDev * (0.9 + 2.5 / Math.sqrt(sampleCount))) * slowConvergeFactor;
+
+  return {
+    low: Math.max(300, mean - halfRange),
+    high: mean + halfRange,
+    mean,
+    sampleCount,
+    confidence
+  };
 }
 
 function generateCar() {
@@ -296,7 +341,8 @@ function generateCar() {
     hiddenFaults,
     cosmeticCondition,
     riskScoreModifier,
-    sellerPersonality
+    sellerPersonality,
+    lastRejectedOffer: 0
   };
 }
 
@@ -331,7 +377,7 @@ function applyDailyEvent() {
   } else if (roll < 0.72) {
     state.dailyEvent = {
       name: "Mechanic Strike",
-      desc: "Repairs and inspection are pricier today.",
+      desc: "Engine/transmission/tire repairs are blocked today; other work costs more.",
       askModifier: 1,
       saleModifier: 1,
       inspectModifier: 1.25
@@ -362,7 +408,8 @@ function renderTopbar() {
   el.topbar.innerHTML = `
     <strong>Day:</strong> ${state.day}/${CONFIG.maxDays}
     | <strong>Money:</strong> ${fmt(state.money)}
-    | <strong>Total Profit:</strong> ${fmt(state.totalProfit)}
+    | <strong>Revenue:</strong> ${fmt(state.totalProfit)}
+    | <strong>Balance Delta:</strong> ${fmt(balanceDelta())}
     | <strong>Inventory:</strong> ${state.inventory.length}
     | <strong>Today Buyer:</strong> ${buyer ? buyer.name : "N/A"}
     ${nextBuyer ? `| <strong>Next:</strong> ${nextBuyer.name}` : ""}
@@ -398,7 +445,7 @@ function renderMarket() {
     const card = document.createElement("div");
     card.className = "card";
     const visible = car.visibleFaults.length ? car.visibleFaults.map((f) => FAULTS[f].label).join(", ") : "none obvious";
-    const estimate = notebookEstimate(car);
+    const estimate = notebookEstimateRange(car);
 
     card.innerHTML = `
       <strong>${car.name}</strong><br>
@@ -406,7 +453,7 @@ function renderMarket() {
       Cosmetic: ${car.cosmeticCondition}/100 | Seller: ${car.sellerPersonality.name}<br>
       Visible faults: ${visible}<br>
       Asking: ${fmt(car.askingPrice)}<br>
-      Notebook estimate: ${estimate ? fmt(estimate) : "insufficient history"}
+      Notebook estimate: ${estimate ? `${fmt(estimate.low)} - ${fmt(estimate.high)} (${estimate.sampleCount} sales)` : "insufficient history"}
     `;
 
     const btn = document.createElement("button");
@@ -457,6 +504,7 @@ function attemptOffer(type) {
   }
 
   const offer = Math.round(car.askingPrice * ratio);
+  trackAction("offer", { carId: car.id, name: car.name, type, offer, asking: car.askingPrice });
   const trueValue = calcTrueValue({ ...car, repairedFaults: new Set(), inspected: true });
   const qualityBonus = clamp((trueValue / car.askingPrice - 1) * 0.25, -0.12, 0.12);
   const patienceBonus = (1 - car.sellerPersonality.patience) * 0.2;
@@ -467,18 +515,29 @@ function attemptOffer(type) {
     return;
   }
 
+  if (offer <= car.lastRejectedOffer) {
+    log(`Seller rejects ${fmt(offer)} immediately after earlier higher offer.`);
+    trackAction("offer_reject_floor", { carId: car.id, offer, lastRejectedOffer: car.lastRejectedOffer });
+    showPanel(el.marketPanel);
+    return;
+  }
+
+  if (offer >= car.askingPrice) {
+    buyCar(car, offer);
+    log("Seller accepted immediately because offer met/exceeded asking.");
+    trackAction("offer_accept_auto", { carId: car.id, offer });
+    return;
+  }
+
   if (Math.random() < acceptChance) {
     buyCar(car, offer);
+    trackAction("offer_accept", { carId: car.id, offer, acceptChance });
     return;
   }
 
-  if (type === "asking" && Math.random() < 0.35 && car.askingPrice <= state.money) {
-    buyCar(car, car.askingPrice);
-    log("Seller ignored your tactic but accepted full asking price.");
-    return;
-  }
-
+  car.lastRejectedOffer = Math.max(car.lastRejectedOffer || 0, offer);
   log(`Seller rejected ${fmt(offer)} for ${car.name}.`);
+  trackAction("offer_reject", { carId: car.id, offer, acceptChance });
   showPanel(el.marketPanel);
 }
 
@@ -486,6 +545,13 @@ function buyCar(car, price) {
   const ownedCar = {
     ...car,
     boughtFor: price,
+    totalInvested: price,
+    repairSpend: 0,
+    inspectSpend: 0,
+    cleaningSpend: 0,
+    sellFees: 0,
+    saleAttempts: 0,
+    actionHistory: [{ kind: "buy", day: state.day, amount: price }],
     inspected: false,
     repairedFaults: new Set(),
     purchaseDay: state.day
@@ -493,12 +559,13 @@ function buyCar(car, price) {
 
   state.money -= price;
   state.totalSpent += price;
-  state.totalProfit = state.totalRevenue - state.totalSpent;
+  state.totalProfit = state.totalRevenue;
   state.inventory.push(ownedCar);
   state.selectedInventoryId = ownedCar.id;
   state.dayCars = state.dayCars.filter((c) => c.id !== car.id);
 
   log(`Bought ${car.name} for ${fmt(price)}. Inventory now ${state.inventory.length}.`);
+  trackAction("buy", { carId: car.id, name: car.name, price });
   recordSeriesPoint();
   renderGraphs();
   renderMarket();
@@ -531,9 +598,13 @@ function inspectSelectedCar() {
 
   state.money -= cost;
   state.totalSpent += cost;
-  state.totalProfit = state.totalRevenue - state.totalSpent;
+  state.totalProfit = state.totalRevenue;
+  car.inspectSpend += cost;
+  car.totalInvested += cost;
+  car.actionHistory.push({ kind: "inspect", day: state.day, amount: cost });
   car.inspected = true;
   log(`Inspection complete on ${car.name}. Hidden faults revealed.`);
+  trackAction("inspect", { carId: car.id, name: car.name, cost });
   recordSeriesPoint();
   renderGraphs();
   renderGarage();
@@ -549,6 +620,11 @@ function repairSelectedCarFault(faultId) {
   }
 
   const info = FAULTS[faultId];
+  if (state.dailyEvent.name === "Mechanic Strike" && MECHANICAL_FAULTS.has(faultId)) {
+    log(`Mechanic Strike blocks repair on ${info.label} today.`);
+    return;
+  }
+
   const cost = Math.round(info.repairCost * state.dailyEvent.inspectModifier);
   if (state.money < cost) {
     log(`Cannot repair ${info.label}: need ${fmt(cost)}.`);
@@ -557,9 +633,13 @@ function repairSelectedCarFault(faultId) {
 
   state.money -= cost;
   state.totalSpent += cost;
-  state.totalProfit = state.totalRevenue - state.totalSpent;
+  state.totalProfit = state.totalRevenue;
+  car.repairSpend += cost;
+  car.totalInvested += cost;
+  car.actionHistory.push({ kind: "repair", day: state.day, amount: cost, faultId });
   car.repairedFaults.add(faultId);
   log(`Repaired ${info.label} on ${car.name} for ${fmt(cost)}.`);
+  trackAction("repair", { carId: car.id, name: car.name, faultId, cost });
   recordSeriesPoint();
   renderGraphs();
   renderGarage();
@@ -578,9 +658,13 @@ function cleanSelectedCarCosmetic() {
 
   state.money -= CONFIG.cosmeticCleanCost;
   state.totalSpent += CONFIG.cosmeticCleanCost;
-  state.totalProfit = state.totalRevenue - state.totalSpent;
+  state.totalProfit = state.totalRevenue;
+  car.cleaningSpend += CONFIG.cosmeticCleanCost;
+  car.totalInvested += CONFIG.cosmeticCleanCost;
+  car.actionHistory.push({ kind: "clean", day: state.day, amount: CONFIG.cosmeticCleanCost });
   car.cosmeticCondition = clamp(car.cosmeticCondition + 10, 0, 100);
   log(`Quick cleaning done on ${car.name} for ${fmt(CONFIG.cosmeticCleanCost)}.`);
+  trackAction("clean", { carId: car.id, name: car.name, cost: CONFIG.cosmeticCleanCost });
   recordSeriesPoint();
   renderGraphs();
   renderGarage();
@@ -665,6 +749,10 @@ function attemptSale(priceMode) {
 
   state.money -= CONFIG.sellAttemptFee;
   state.totalSpent += CONFIG.sellAttemptFee;
+  car.sellFees += CONFIG.sellAttemptFee;
+  car.totalInvested += CONFIG.sellAttemptFee;
+  car.saleAttempts += 1;
+  car.actionHistory.push({ kind: "sell_attempt", day: state.day, amount: CONFIG.sellAttemptFee, mode: priceMode });
 
   let outcome = "failed sale";
   let finalPrice = 0;
@@ -684,21 +772,39 @@ function attemptSale(priceMode) {
   if (finalPrice > 0) {
     state.money += finalPrice;
     state.totalRevenue += finalPrice;
-    state.totalProfit = state.totalRevenue - state.totalSpent;
+    state.totalProfit = state.totalRevenue;
     state.saleHistory.push({ ...carComparableData(car), finalPrice });
+    const dealProfit = finalPrice - car.totalInvested;
+    state.completedDeals.unshift({
+      id: car.id,
+      name: car.name,
+      purchaseDay: car.purchaseDay,
+      sellDay: state.day,
+      boughtFor: car.boughtFor,
+      invested: car.totalInvested,
+      salePrice: finalPrice,
+      dealProfit,
+      saleAttempts: car.saleAttempts,
+      buyerType: buyer.name,
+      mode: priceMode,
+      faultsFixed: [...car.repairedFaults]
+    });
     state.inventory = state.inventory.filter((c) => c.id !== car.id);
     if (state.selectedInventoryId === car.id) {
       state.selectedInventoryId = state.inventory[0]?.id || null;
     }
     log(`${buyer.name} ${outcome}: ${car.name} sold for ${fmt(finalPrice)}.`);
+    trackAction("sell_success", { carId: car.id, name: car.name, buyer: buyer.name, mode: priceMode, listPrice, finalPrice, invested: car.totalInvested, dealProfit });
   } else {
-    state.totalProfit = state.totalRevenue - state.totalSpent;
+    state.totalProfit = state.totalRevenue;
     log(`${buyer.name} ${outcome}: ${car.name} not sold. Car stays in inventory.`);
+    trackAction("sell_fail", { carId: car.id, name: car.name, buyer: buyer.name, mode: priceMode, listPrice });
   }
 
   state.buyerServedToday = true;
   recordSeriesPoint();
   renderGraphs();
+  renderDealHistory();
 
   el.saleContent.innerHTML = `
     <div class="card">
@@ -765,7 +871,7 @@ function renderGarage() {
 
   const knownFaults = discoveredFaults(car);
   const unresolvedKnown = knownFaults.filter((f) => !car.repairedFaults.has(f));
-  const notebook = notebookEstimate(car);
+  const notebook = notebookEstimateRange(car);
 
   el.garageContent.innerHTML = `
     <div class="card">
@@ -774,7 +880,8 @@ function renderGarage() {
       Cosmetic: ${car.cosmeticCondition}/100<br>
       Known faults: ${knownFaults.length ? knownFaults.map((f) => FAULTS[f].label).join(", ") : "none"}<br>
       Hidden faults: ${car.inspected ? "revealed" : "unknown"}<br>
-      Notebook estimate: ${notebook ? fmt(notebook) : "insufficient history"}<br>
+      Notebook estimate: ${notebook ? `${fmt(notebook.low)} - ${fmt(notebook.high)} (${notebook.sampleCount} sales)` : "insufficient history"}<br>
+      Invested so far: ${fmt(car.totalInvested)}<br>
       Today buyer: ${buyer ? buyer.name : "N/A"} (${buyer ? buyer.profile : "-"})
     </div>
   `;
@@ -790,6 +897,9 @@ function renderGarage() {
     if (car.repairedFaults.has(faultId)) {
       btn.disabled = true;
       btn.textContent = "Already Repaired";
+    } else if (state.dailyEvent.name === "Mechanic Strike" && MECHANICAL_FAULTS.has(faultId)) {
+      btn.disabled = true;
+      btn.textContent = "Blocked By Mechanic Strike";
     } else {
       btn.textContent = `Repair ${fault.label}`;
       btn.addEventListener("click", () => repairSelectedCarFault(faultId));
@@ -820,16 +930,44 @@ function renderGarage() {
   }
 }
 
+function renderDealHistory() {
+  if (state.completedDeals.length === 0) {
+    el.dealHistory.innerHTML = "No completed deals yet.";
+    return;
+  }
+
+  el.dealHistory.innerHTML = state.completedDeals
+    .slice(0, 24)
+    .map((deal) => {
+      const roi = deal.invested > 0 ? (deal.dealProfit / deal.invested) * 100 : 0;
+      return `
+        <div class="card">
+          <strong>${deal.name}</strong>
+          | Buy d${deal.purchaseDay}: ${fmt(deal.boughtFor)}
+          | Sell d${deal.sellDay}: ${fmt(deal.salePrice)}
+          | Invested: ${fmt(deal.invested)}
+          | Deal P/L: ${fmt(deal.dealProfit)}
+          | ROI: ${roi.toFixed(1)}%
+          | Buyer: ${deal.buyerType}
+          | Attempts: ${deal.saleAttempts}
+        </div>
+      `;
+    })
+    .join("");
+}
+
 function recordSeriesPoint() {
   state.series.money.push(state.money);
   state.series.spent.push(state.totalSpent);
   state.series.profit.push(state.totalProfit);
+  state.series.balanceDelta.push(balanceDelta());
 
   const maxPoints = 60;
   if (state.series.money.length > maxPoints) {
     state.series.money.shift();
     state.series.spent.shift();
     state.series.profit.shift();
+    state.series.balanceDelta.shift();
   }
 }
 
@@ -875,6 +1013,60 @@ function renderGraphs() {
   renderSpark(el.profitGraph, state.series.profit, "#16a34a");
 }
 
+function buildExportData() {
+  return {
+    meta: {
+      exportedAt: new Date().toISOString(),
+      runStartedAt: state.runStartedAt,
+      day: state.day,
+      runOver: state.runOver
+    },
+    summary: {
+      startingMoney: CONFIG.startingMoney,
+      money: state.money,
+      revenue: state.totalRevenue,
+      spent: state.totalSpent,
+      balanceDelta: balanceDelta(),
+      inventoryCount: state.inventory.length
+    },
+    series: state.series,
+    completedDeals: state.completedDeals,
+    saleHistory: state.saleHistory,
+    inventorySnapshot: state.inventory.map((car) => ({
+      id: car.id,
+      name: car.name,
+      purchaseDay: car.purchaseDay,
+      boughtFor: car.boughtFor,
+      totalInvested: car.totalInvested,
+      saleAttempts: car.saleAttempts,
+      inspected: car.inspected,
+      visibleFaults: car.visibleFaults,
+      hiddenFaults: car.hiddenFaults,
+      repairedFaults: [...car.repairedFaults]
+    })),
+    logs: state.logLines,
+    actions: state.actions
+  };
+}
+
+function exportRunData(auto = false) {
+  const payload = buildExportData();
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filename = `junker-trader-run-${stamp}.json`;
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  el.exportStatus.textContent = `exported: ${filename}`;
+  if (!auto) {
+    log(`Exported run data to ${filename}.`);
+  }
+  trackAction("export", { filename, auto });
+}
+
 function endDay() {
   if (state.runOver) {
     return;
@@ -890,6 +1082,7 @@ function endDay() {
   state.buyerServedToday = false;
   advanceBuyerQueue();
   generateDayCars();
+  trackAction("end_day", { nextDay: state.day, event: state.dailyEvent.name, buyer: getCurrentBuyer().name });
   recordSeriesPoint();
   renderGraphs();
   renderMarket();
@@ -907,7 +1100,7 @@ function finishRun() {
       Final money: ${fmt(state.money)}<br>
       Total spent: ${fmt(state.totalSpent)}<br>
       Total revenue: ${fmt(state.totalRevenue)}<br>
-      Total profit: ${fmt(state.totalProfit)}<br>
+      Balance delta: ${fmt(balanceDelta())}<br>
       Unsold inventory: ${state.inventory.length}
     </div>
     <button id="restart-btn">Restart Run</button>
@@ -916,7 +1109,9 @@ function finishRun() {
   const restart = document.getElementById("restart-btn");
   restart.addEventListener("click", () => window.location.reload());
   renderTopbar();
-  log(`Run finished. Final profit: ${fmt(state.totalProfit)}.`);
+  log(`Run finished. Revenue: ${fmt(state.totalRevenue)}. Balance delta: ${fmt(balanceDelta())}.`);
+  renderDealHistory();
+  exportRunData(true);
 }
 
 // ==== Events ====
@@ -943,6 +1138,7 @@ el.inspectBtn.addEventListener("click", inspectSelectedCar);
 el.sellQuickBtn.addEventListener("click", () => attemptSale("quick"));
 el.sellFairBtn.addEventListener("click", () => attemptSale("fair"));
 el.sellPremiumBtn.addEventListener("click", () => attemptSale("premium"));
+el.exportDataBtn.addEventListener("click", () => exportRunData(false));
 el.continueBtn.addEventListener("click", () => {
   renderGarage();
   showPanel(el.garagePanel);
@@ -954,8 +1150,10 @@ function init() {
   generateDayCars();
   recordSeriesPoint();
   renderGraphs();
+  renderDealHistory();
   renderMarket();
   log(`Run started with ${fmt(state.money)}. Buyer now: ${getCurrentBuyer().name}. Event: ${state.dailyEvent.name}.`);
+  trackAction("run_start", { money: state.money, buyer: getCurrentBuyer().name, event: state.dailyEvent.name });
 }
 
 init();

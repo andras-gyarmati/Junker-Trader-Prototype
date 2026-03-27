@@ -19,7 +19,9 @@ No build tools, backend, or persistence.
 - You can buy and hold multiple cars in inventory.
 - Selling has pricing modes (`quick`, `fair`, `premium`) with buyer-dependent outcomes.
 - Daily event is shown clearly in top bar and buyer forecast card.
-- Added run graphs for money, total spent, and total profit.
+- Added run graphs for money, total spent, and total revenue.
+- Added completed deal stats per car (buy day, sell day, invested, sale price, deal P/L, ROI).
+- Added dated run-data export (`junker-trader-run-<timestamp>.json`) with logs + actions.
 
 ## Tweak Values
 
@@ -39,6 +41,8 @@ Look at:
 
 - One buyer interaction per day (sell attempt consumes that day's buyer).
 - Sale chance is a simple probabilistic model, not a full listing simulation.
-- Notebook estimate is a lightweight similarity model from prior sales.
+- Notebook estimate is a lightweight similarity range model from prior sales and narrows over time.
 - Hidden faults are only revealed after inspection.
+- `Mechanic Strike` blocks engine/transmission/tire repairs for that day.
+- `Revenue` is sell income only; cash impact is visible via `Money` and `Balance Delta`.
 - No persistence, no backend, no advanced UI.

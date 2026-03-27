@@ -62,6 +62,8 @@
 
   <section class="graphs">
     <h3>Run Graphs</h3>
+    <button id="export-data-btn">Export Run Data</button>
+    <span id="export-status" class="small"></span>
     <div class="graph-wrap">
       <div class="small">Money Balance</div>
       <svg id="money-graph" viewBox="0 0 700 130" preserveAspectRatio="none"></svg>
@@ -71,9 +73,14 @@
       <svg id="spent-graph" viewBox="0 0 700 130" preserveAspectRatio="none"></svg>
     </div>
     <div class="graph-wrap">
-      <div class="small">Total Profit</div>
+      <div class="small">Total Revenue</div>
       <svg id="profit-graph" viewBox="0 0 700 130" preserveAspectRatio="none"></svg>
     </div>
+  </section>
+
+  <section class="graphs">
+    <h3>Completed Deals</h3>
+    <div id="deal-history" class="small"></div>
   </section>
 
   <section>

@@ -179,6 +179,13 @@ function fmt(n) {
   return `$${Math.round(n).toLocaleString()}`;
 }
 
+function makeId() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `id-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+}
+
 function balanceDelta() {
   return state.money - CONFIG.startingMoney;
 }
@@ -500,7 +507,7 @@ function generateCar() {
   askingPrice = clamp(askingPrice, 550, baseMarketValue * 1.08);
 
   return {
-    id: crypto.randomUUID(),
+    id: makeId(),
     name: pick(CAR_NAMES),
     age,
     mileage,

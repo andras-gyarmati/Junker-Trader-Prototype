@@ -146,8 +146,7 @@ const el = {
   actionsLogLink: document.getElementById("actions-log-link"),
   persistenceStatus: document.getElementById("persistence-status"),
   moneyGraph: document.getElementById("money-graph"),
-  spentGraph: document.getElementById("spent-graph"),
-  profitGraph: document.getElementById("profit-graph"),
+  economyGraph: document.getElementById("economy-graph"),
   nextDayBtn: document.getElementById("next-day-btn"),
   toGarageFromMarketBtn: document.getElementById("to-garage-from-market-btn"),
   toMarketFromGarageBtn: document.getElementById("to-market-from-garage-btn"),
@@ -593,6 +592,7 @@ function renderTopbar() {
     | <strong>Buyers Left Today:</strong> ${state.buyersRemainingToday}/${state.dayBuyerDemand}
     | <strong>Event:</strong> ${state.dailyEvent.name}
   `;
+  renderBuyerForecast();
 }
 
 function renderBuyerForecast() {
@@ -601,18 +601,20 @@ function renderBuyerForecast() {
     .slice(0, CONFIG.buyerPreviewCount)
     .map((b, idx) => `${idx === 0 ? "Now" : `Next ${idx}`}: ${b.name}`)
     .join(" | ");
+  const availability = state.buyersRemainingToday > 0
+    ? `${state.buyersRemainingToday} buyer(s) left today`
+    : "No buyers left today. End day in Market to refresh.";
 
   el.buyerForecast.innerHTML = `
-    <strong>Buyer Queue:</strong> ${preview}<br>
-    <strong>Current Buyer Need:</strong> ${buyer ? buyer.profile : "N/A"}<br>
-    <strong>Daily demand:</strong> ${state.buyersRemainingToday} buyer(s) left today<br>
+    <strong>Selling Desk (buyers for selling):</strong> ${preview}<br>
+    <strong>Current buyer need:</strong> ${buyer ? buyer.profile : "N/A"}<br>
+    <strong>Availability:</strong> ${availability}<br>
     <strong>Today Event:</strong> ${state.dailyEvent.name} - ${state.dailyEvent.desc}
   `;
 }
 
 function renderMarket() {
   renderTopbar();
-  renderBuyerForecast();
   el.marketCars.innerHTML = "";
 
   if (state.dayCars.length === 0) {
@@ -732,6 +734,7 @@ function buyCar(car, price) {
     repairSpend: 0,
     inspectSpend: 0,
     cleaningSpend: 0,
+    cleanedOnce: false,
     sellFees: 0,
     saleAttempts: 0,
     actionHistory: [{ kind: "buy", day: state.day, amount: price }],
@@ -833,6 +836,10 @@ function cleanSelectedCarCosmetic() {
   if (!car) {
     return;
   }
+  if (car.cleanedOnce) {
+    log(`Cosmetic cleaning already used on ${car.name}.`);
+    return;
+  }
 
   if (state.money < CONFIG.cosmeticCleanCost) {
     log(`Cannot clean: need ${fmt(CONFIG.cosmeticCleanCost)}.`);
@@ -844,6 +851,7 @@ function cleanSelectedCarCosmetic() {
   state.totalProfit = state.totalRevenue;
   car.cleaningSpend += CONFIG.cosmeticCleanCost;
   car.totalInvested += CONFIG.cosmeticCleanCost;
+  car.cleanedOnce = true;
   car.actionHistory.push({ kind: "clean", day: state.day, amount: CONFIG.cosmeticCleanCost });
   car.cosmeticCondition = clamp(car.cosmeticCondition + 10, 0, 100);
   log(`Quick cleaning done on ${car.name} for ${fmt(CONFIG.cosmeticCleanCost)}.`);
@@ -1189,6 +1197,7 @@ function renderGarage() {
       Notebook estimate: ${notebook ? `${fmt(notebook.low)} - ${fmt(notebook.high)}` : "insufficient history"}<br>
       Notebook basis: ${notebook ? `${notebook.matchedSamples} strong matches / ${notebook.sampleCount} total sales` : "sell more cars to train notebook"}<br>
       Invested so far: ${fmt(car.totalInvested)}<br>
+      Cleaning status: ${car.cleanedOnce ? "already used" : "available"}<br>
       Work log: ${car.actionHistory.length ? car.actionHistory.map((w) => {
         return formatWorkLogEntry(w);
       }).join(" | ") : "none"}<br>
@@ -1227,13 +1236,16 @@ function renderGarage() {
 
   const cleanRow = document.createElement("div");
   cleanRow.className = "card";
-  cleanRow.innerHTML = `Cosmetic cleaning | Cost: ${fmt(CONFIG.cosmeticCleanCost)} | Helps impulse/picky buyers`;
+  cleanRow.innerHTML = `Cosmetic cleaning | Cost: ${fmt(CONFIG.cosmeticCleanCost)} | Helps impulse/picky buyers | One-time`;
   const cleanBtn = document.createElement("button");
-  cleanBtn.textContent = "Cheap Clean";
-  cleanBtn.addEventListener("click", () => {
-    trackAction("ui_click", { control: "cheap-clean-btn", carId: car.id }, true);
-    cleanSelectedCarCosmetic();
-  });
+  cleanBtn.textContent = car.cleanedOnce ? "Already Cleaned" : "Cheap Clean";
+  cleanBtn.disabled = car.cleanedOnce;
+  if (!car.cleanedOnce) {
+    cleanBtn.addEventListener("click", () => {
+      trackAction("ui_click", { control: "cheap-clean-btn", carId: car.id }, true);
+      cleanSelectedCarCosmetic();
+    });
+  }
   cleanRow.appendChild(document.createElement("br"));
   cleanRow.appendChild(cleanBtn);
   el.repairActions.appendChild(cleanRow);
@@ -1244,6 +1256,9 @@ function renderGarage() {
   el.sellFairBtn.disabled = disableSaleButtons;
   el.sellPremiumBtn.disabled = disableSaleButtons;
   el.sellJunkyardBtn.disabled = false;
+  if (disableSaleButtons) {
+    el.repairActions.insertAdjacentHTML("afterbegin", "<div class=\"notice\">No buyers left today. End day in Market to continue selling. Junkyard is still available.</div>");
+  }
 
   if (unresolvedKnown.length > 0 && !car.inspected) {
     // intentionally no-op: this keeps pressure to inspect before committing sale
@@ -1347,10 +1362,65 @@ function renderSpark(svgEl, data, color) {
   });
 }
 
+function renderDualSpark(svgEl, dataA, colorA, dataB, colorB) {
+  const width = 700;
+  const height = 130;
+  svgEl.innerHTML = "";
+  if (dataA.length < 2 || dataB.length < 2) {
+    return;
+  }
+
+  const n = Math.min(dataA.length, dataB.length);
+  const a = dataA.slice(dataA.length - n);
+  const b = dataB.slice(dataB.length - n);
+  const combined = [...a, ...b];
+  const min = Math.min(...combined);
+  const max = Math.max(...combined);
+  const range = Math.max(1, max - min);
+
+  const toPts = (arr) => arr.map((v, i) => {
+    const x = (i / (arr.length - 1)) * width;
+    const y = height - ((v - min) / range) * (height - 12) - 6;
+    return { x, y, v };
+  });
+  const ptsA = toPts(a);
+  const ptsB = toPts(b);
+
+  const axis = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  axis.setAttribute("x1", "0");
+  axis.setAttribute("y1", String(height - 6));
+  axis.setAttribute("x2", String(width));
+  axis.setAttribute("y2", String(height - 6));
+  axis.setAttribute("stroke", "#ccc");
+  axis.setAttribute("stroke-width", "1");
+  svgEl.appendChild(axis);
+
+  const draw = (pts, color) => {
+    const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    poly.setAttribute("points", pts.map((p) => `${p.x},${p.y}`).join(" "));
+    poly.setAttribute("fill", "none");
+    poly.setAttribute("stroke", color);
+    poly.setAttribute("stroke-width", "2");
+    svgEl.appendChild(poly);
+    pts.forEach((p) => {
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("cx", String(p.x));
+      c.setAttribute("cy", String(p.y));
+      c.setAttribute("r", "2");
+      c.setAttribute("fill", color);
+      const t = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      t.textContent = `${Math.round(p.v).toLocaleString()}`;
+      c.appendChild(t);
+      svgEl.appendChild(c);
+    });
+  };
+  draw(ptsA, colorA);
+  draw(ptsB, colorB);
+}
+
 function renderGraphs() {
   renderSpark(el.moneyGraph, state.series.money, "#3b82f6");
-  renderSpark(el.spentGraph, state.series.spent, "#ef4444");
-  renderSpark(el.profitGraph, state.series.profit, "#16a34a");
+  renderDualSpark(el.economyGraph, state.series.spent, "#ef4444", state.series.profit, "#16a34a");
 }
 
 function buildExportData() {

@@ -1,13 +1,13 @@
 // ==== Balance Constants (tweak here) ====
 const CONFIG = {
-  startingMoney: 12000,
-  maxDays: 8,
+  startingMoney: 14000,
+  maxDays: 10,
   carsPerDayMin: 3,
   carsPerDayMax: 5,
-  inspectCost: 200,
+  inspectCost: 220,
   cosmeticCleanCost: 180,
-  cosmeticCleanGain: 320,
-  marketNoisePct: 0.12,
+  sellAttemptFee: 120,
+  buyerPreviewCount: 3,
   negotiation: {
     lowballRatio: 0.72,
     fairRatio: 0.9,
@@ -17,11 +17,17 @@ const CONFIG = {
     askingBaseAccept: 0.92
   },
   selling: {
-    minListMarkup: 0.9,
-    maxListMarkup: 1.2,
-    autoPriceDropRatio: 0.93,
-    unresolvedFaultPenaltyChance: 0.06,
-    cosmeticPenaltyMultiplier: 0.08
+    quickMultiplier: 0.92,
+    fairMultiplier: 1.0,
+    premiumMultiplier: 1.1,
+    postHaggleMin: 0.86,
+    postHaggleMax: 0.95,
+    pricePenaltyWeight: 0.85,
+    cosmeticPenaltyWeight: 0.25,
+    unresolvedPenaltyWeight: 0.8
+  },
+  notebook: {
+    minSamplesForEstimate: 2
   }
 };
 
@@ -35,10 +41,38 @@ const FAULTS = {
 };
 
 const BUYER_TYPES = [
-  { name: "Bargain Hunter", tolerance: 0.88, flawSensitivity: 1.1, haggleChance: 0.65 },
-  { name: "Picky Buyer", tolerance: 0.96, flawSensitivity: 1.5, haggleChance: 0.5 },
-  { name: "Enthusiast", tolerance: 1.05, flawSensitivity: 0.8, haggleChance: 0.3 },
-  { name: "Impulse Buyer", tolerance: 1.12, flawSensitivity: 0.6, haggleChance: 0.2 }
+  {
+    name: "Bargain Hunter",
+    tolerance: 0.92,
+    flawSensitivity: 0.85,
+    cosmeticNeed: 0.4,
+    haggleChance: 0.75,
+    profile: "Wants cheap deals, tolerates rough condition"
+  },
+  {
+    name: "Picky Buyer",
+    tolerance: 0.98,
+    flawSensitivity: 1.6,
+    cosmeticNeed: 1.2,
+    haggleChance: 0.45,
+    profile: "Pays okay only for clean cars with few faults"
+  },
+  {
+    name: "Enthusiast",
+    tolerance: 1.06,
+    flawSensitivity: 0.9,
+    cosmeticNeed: 0.7,
+    haggleChance: 0.25,
+    profile: "Accepts premium if key mechanical parts are sorted"
+  },
+  {
+    name: "Impulse Buyer",
+    tolerance: 1.12,
+    flawSensitivity: 0.65,
+    cosmeticNeed: 1.0,
+    haggleChance: 0.2,
+    profile: "Buys quickly if car looks appealing"
+  }
 ];
 
 const CAR_NAMES = [
@@ -56,37 +90,55 @@ const SELLER_PERSONALITIES = [
 const state = {
   day: 1,
   money: CONFIG.startingMoney,
+  totalSpent: 0,
+  totalRevenue: 0,
   totalProfit: 0,
   dayCars: [],
+  inventory: [],
   selectedCar: null,
-  ownedCar: null,
-  inspected: false,
-  repairedFaults: new Set(),
+  selectedInventoryId: null,
+  buyerQueue: [],
+  buyerServedToday: false,
+  saleHistory: [],
   logLines: [],
   runOver: false,
-  dailyEvent: null
+  dailyEvent: null,
+  series: {
+    money: [],
+    spent: [],
+    profit: []
+  }
 };
 
 // ==== DOM refs ====
 const el = {
   topbar: document.getElementById("topbar"),
+  buyerForecast: document.getElementById("buyer-forecast"),
   marketPanel: document.getElementById("market-panel"),
   marketCars: document.getElementById("market-cars"),
   negotiationPanel: document.getElementById("negotiation-panel"),
   negotiationContent: document.getElementById("negotiation-content"),
   garagePanel: document.getElementById("garage-panel"),
+  inventoryList: document.getElementById("inventory-list"),
   garageContent: document.getElementById("garage-content"),
   repairActions: document.getElementById("repair-actions"),
   salePanel: document.getElementById("sale-panel"),
   saleContent: document.getElementById("sale-content"),
   log: document.getElementById("event-log"),
+  moneyGraph: document.getElementById("money-graph"),
+  spentGraph: document.getElementById("spent-graph"),
+  profitGraph: document.getElementById("profit-graph"),
   nextDayBtn: document.getElementById("next-day-btn"),
+  toGarageFromMarketBtn: document.getElementById("to-garage-from-market-btn"),
+  toMarketFromGarageBtn: document.getElementById("to-market-from-garage-btn"),
   offerLowball: document.getElementById("offer-lowball"),
   offerFair: document.getElementById("offer-fair"),
   offerAsking: document.getElementById("offer-asking"),
   walkAway: document.getElementById("walk-away"),
   inspectBtn: document.getElementById("inspect-btn"),
-  toSaleBtn: document.getElementById("to-sale-btn"),
+  sellQuickBtn: document.getElementById("sell-quick-btn"),
+  sellFairBtn: document.getElementById("sell-fair-btn"),
+  sellPremiumBtn: document.getElementById("sell-premium-btn"),
   continueBtn: document.getElementById("continue-btn")
 };
 
@@ -108,7 +160,7 @@ function fmt(n) {
 
 function log(msg) {
   state.logLines.unshift(`[Day ${state.day}] ${msg}`);
-  state.logLines = state.logLines.slice(0, 18);
+  state.logLines = state.logLines.slice(0, 20);
   el.log.textContent = state.logLines.join("\n");
 }
 
@@ -117,38 +169,83 @@ function showPanel(panel) {
   panel.classList.add("active");
 }
 
-function effectiveKnownFaults(car) {
-  const known = [...car.visibleFaults];
-  if (state.inspected) {
-    known.push(...car.hiddenFaults);
+function getCurrentBuyer() {
+  return state.buyerQueue[0] || null;
+}
+
+function ensureBuyerQueue() {
+  while (state.buyerQueue.length < CONFIG.buyerPreviewCount) {
+    state.buyerQueue.push(pick(BUYER_TYPES));
   }
-  return known;
+}
+
+function advanceBuyerQueue() {
+  state.buyerQueue.shift();
+  ensureBuyerQueue();
 }
 
 function discoveredFaults(car) {
+  if (!car.inspected) {
+    return [...car.visibleFaults];
+  }
+  return [...car.visibleFaults, ...car.hiddenFaults];
+}
+
+function allFaults(car) {
   return [...car.visibleFaults, ...car.hiddenFaults];
 }
 
 function unresolvedFaults(car) {
-  return discoveredFaults(car).filter((faultId) => !state.repairedFaults.has(faultId));
+  return allFaults(car).filter((faultId) => !car.repairedFaults.has(faultId));
 }
 
 function calcTrueValue(car) {
   let val = car.baseMarketValue;
-  discoveredFaults(car).forEach((f) => {
-    if (!state.repairedFaults.has(f)) {
+  allFaults(car).forEach((f) => {
+    if (!car.repairedFaults.has(f)) {
       val -= FAULTS[f].valueHit;
     }
   });
   val += (car.cosmeticCondition - 50) * 35;
-  return Math.max(600, val);
+  return Math.max(650, val);
 }
 
-function marketEstimate(car) {
-  const hiddenPenalty = car.hiddenFaults.reduce((sum, f) => sum + FAULTS[f].valueHit, 0);
-  const uncertainty = 1 + (Math.random() * 2 - 1) * CONFIG.marketNoisePct;
-  const estimate = (car.baseMarketValue - hiddenPenalty * (0.4 + car.riskScoreModifier * 0.6)) * uncertainty;
-  return Math.max(500, estimate);
+function carComparableData(car) {
+  return {
+    name: car.name,
+    age: car.age,
+    mileage: car.mileage,
+    cosmeticCondition: car.cosmeticCondition,
+    visibleFaultCount: car.visibleFaults.length
+  };
+}
+
+function notebookEstimate(car) {
+  if (state.saleHistory.length < CONFIG.notebook.minSamplesForEstimate) {
+    return null;
+  }
+
+  const probe = carComparableData(car);
+  let weightedSum = 0;
+  let totalWeight = 0;
+
+  state.saleHistory.forEach((entry) => {
+    const namePenalty = entry.name === probe.name ? 0 : 1.2;
+    const agePenalty = Math.abs(entry.age - probe.age) * 0.08;
+    const mileagePenalty = Math.abs(entry.mileage - probe.mileage) / 60000;
+    const cosmeticPenalty = Math.abs(entry.cosmeticCondition - probe.cosmeticCondition) / 30;
+    const visiblePenalty = Math.abs(entry.visibleFaultCount - probe.visibleFaultCount) * 0.35;
+    const dist = namePenalty + agePenalty + mileagePenalty + cosmeticPenalty + visiblePenalty;
+    const weight = 1 / (1 + dist);
+
+    weightedSum += entry.finalPrice * weight;
+    totalWeight += weight;
+  });
+
+  if (totalWeight <= 0) {
+    return null;
+  }
+  return weightedSum / totalWeight;
 }
 
 function generateCar() {
@@ -157,8 +254,8 @@ function generateCar() {
   const cosmeticCondition = randInt(20, 95);
   const riskScoreModifier = Math.random();
 
-  let baseMarketValue = 14000 - age * 260 - mileage * 0.025 + randInt(-1200, 1200);
-  baseMarketValue = clamp(baseMarketValue, 1300, 11500);
+  let baseMarketValue = 14500 - age * 265 - mileage * 0.025 + randInt(-1200, 1200);
+  baseMarketValue = clamp(baseMarketValue, 1300, 12000);
 
   const faultPool = Object.keys(FAULTS);
   const visibleFaults = [];
@@ -186,7 +283,7 @@ function generateCar() {
   const sellerPersonality = pick(SELLER_PERSONALITIES);
 
   let askingPrice = baseMarketValue - visiblePenalty - hiddenPenalty + randInt(-400, 900);
-  askingPrice = clamp(askingPrice, 500, baseMarketValue * 1.05);
+  askingPrice = clamp(askingPrice, 550, baseMarketValue * 1.08);
 
   return {
     id: crypto.randomUUID(),
@@ -199,20 +296,46 @@ function generateCar() {
     hiddenFaults,
     cosmeticCondition,
     riskScoreModifier,
-    sellerPersonality,
-    boughtFor: null
+    sellerPersonality
   };
 }
 
 function applyDailyEvent() {
   const roll = Math.random();
-  state.dailyEvent = null;
-  if (roll < 0.25) {
-    state.dailyEvent = { name: "Rainy Market", desc: "More rusty junk today.", rustBias: 0.4 };
-  } else if (roll < 0.45) {
-    state.dailyEvent = { name: "Tax Panic", desc: "Sellers are desperate to unload.", askModifier: 0.9 };
-  } else if (roll < 0.6) {
-    state.dailyEvent = { name: "Weekend Hype", desc: "Buyers pay a little more.", saleModifier: 1.06 };
+  state.dailyEvent = { name: "None", desc: "No major market shift.", askModifier: 1, saleModifier: 1, inspectModifier: 1 };
+
+  if (roll < 0.2) {
+    state.dailyEvent = {
+      name: "Rainy Market",
+      desc: "Rusty heaps flood listings. More rust faults.",
+      askModifier: 0.97,
+      saleModifier: 1,
+      inspectModifier: 1
+    };
+  } else if (roll < 0.38) {
+    state.dailyEvent = {
+      name: "Tax Panic",
+      desc: "Sellers drop prices to unload quickly.",
+      askModifier: 0.9,
+      saleModifier: 1,
+      inspectModifier: 1
+    };
+  } else if (roll < 0.56) {
+    state.dailyEvent = {
+      name: "Weekend Hype",
+      desc: "Buyers pay a bit more today.",
+      askModifier: 1,
+      saleModifier: 1.06,
+      inspectModifier: 1
+    };
+  } else if (roll < 0.72) {
+    state.dailyEvent = {
+      name: "Mechanic Strike",
+      desc: "Repairs and inspection are pricier today.",
+      askModifier: 1,
+      saleModifier: 1,
+      inspectModifier: 1.25
+    };
   }
 }
 
@@ -221,33 +344,49 @@ function generateDayCars() {
   const count = randInt(CONFIG.carsPerDayMin, CONFIG.carsPerDayMax);
   state.dayCars = Array.from({ length: count }, () => {
     const car = generateCar();
-    if (
-      state.dailyEvent?.rustBias &&
-      Math.random() < state.dailyEvent.rustBias &&
-      !car.visibleFaults.includes("rust") &&
-      !car.hiddenFaults.includes("rust")
-    ) {
+
+    if (state.dailyEvent.name === "Rainy Market" && Math.random() < 0.45 && !car.visibleFaults.includes("rust") && !car.hiddenFaults.includes("rust")) {
       car.visibleFaults.push("rust");
       car.askingPrice = Math.max(450, car.askingPrice - 300);
     }
-    if (state.dailyEvent?.askModifier) {
-      car.askingPrice = Math.round(car.askingPrice * state.dailyEvent.askModifier);
-    }
+
+    car.askingPrice = Math.round(car.askingPrice * state.dailyEvent.askModifier);
     return car;
   });
 }
 
 function renderTopbar() {
+  const buyer = getCurrentBuyer();
+  const nextBuyer = state.buyerQueue[1];
+
   el.topbar.innerHTML = `
     <strong>Day:</strong> ${state.day}/${CONFIG.maxDays}
     | <strong>Money:</strong> ${fmt(state.money)}
     | <strong>Total Profit:</strong> ${fmt(state.totalProfit)}
-    ${state.dailyEvent ? `| <strong>Event:</strong> ${state.dailyEvent.name} (${state.dailyEvent.desc})` : ""}
+    | <strong>Inventory:</strong> ${state.inventory.length}
+    | <strong>Today Buyer:</strong> ${buyer ? buyer.name : "N/A"}
+    ${nextBuyer ? `| <strong>Next:</strong> ${nextBuyer.name}` : ""}
+    | <strong>Event:</strong> ${state.dailyEvent.name}
+  `;
+}
+
+function renderBuyerForecast() {
+  const buyer = getCurrentBuyer();
+  const preview = state.buyerQueue
+    .slice(0, CONFIG.buyerPreviewCount)
+    .map((b, idx) => `${idx === 0 ? "Now" : `Next ${idx}`}: ${b.name}`)
+    .join(" | ");
+
+  el.buyerForecast.innerHTML = `
+    <strong>Buyer Queue:</strong> ${preview}<br>
+    <strong>Current Buyer Need:</strong> ${buyer ? buyer.profile : "N/A"}<br>
+    <strong>Today Event:</strong> ${state.dailyEvent.name} - ${state.dailyEvent.desc}
   `;
 }
 
 function renderMarket() {
   renderTopbar();
+  renderBuyerForecast();
   el.marketCars.innerHTML = "";
 
   if (state.dayCars.length === 0) {
@@ -259,19 +398,19 @@ function renderMarket() {
     const card = document.createElement("div");
     card.className = "card";
     const visible = car.visibleFaults.length ? car.visibleFaults.map((f) => FAULTS[f].label).join(", ") : "none obvious";
-    const estimate = marketEstimate(car);
+    const estimate = notebookEstimate(car);
 
     card.innerHTML = `
       <strong>${car.name}</strong><br>
       Age: ${car.age} years | Mileage: ${car.mileage.toLocaleString()} km<br>
       Cosmetic: ${car.cosmeticCondition}/100 | Seller: ${car.sellerPersonality.name}<br>
       Visible faults: ${visible}<br>
-      Asking: ${fmt(car.askingPrice)} | Rough market estimate: ${fmt(estimate)}
+      Asking: ${fmt(car.askingPrice)}<br>
+      Notebook estimate: ${estimate ? fmt(estimate) : "insufficient history"}
     `;
 
     const btn = document.createElement("button");
     btn.textContent = "Negotiate";
-    btn.disabled = state.ownedCar !== null;
     btn.addEventListener("click", () => startNegotiation(car.id));
 
     card.appendChild(document.createElement("br"));
@@ -318,7 +457,8 @@ function attemptOffer(type) {
   }
 
   const offer = Math.round(car.askingPrice * ratio);
-  const qualityBonus = clamp((calcTrueValue(car) / car.askingPrice - 1) * 0.25, -0.12, 0.12);
+  const trueValue = calcTrueValue({ ...car, repairedFaults: new Set(), inspected: true });
+  const qualityBonus = clamp((trueValue / car.askingPrice - 1) * 0.25, -0.12, 0.12);
   const patienceBonus = (1 - car.sellerPersonality.patience) * 0.2;
   const acceptChance = clamp(baseAccept + qualityBonus + patienceBonus, 0.05, 0.98);
 
@@ -343,104 +483,316 @@ function attemptOffer(type) {
 }
 
 function buyCar(car, price) {
-  car.boughtFor = price;
+  const ownedCar = {
+    ...car,
+    boughtFor: price,
+    inspected: false,
+    repairedFaults: new Set(),
+    purchaseDay: state.day
+  };
+
   state.money -= price;
-  state.ownedCar = car;
-  state.inspected = false;
-  state.repairedFaults = new Set();
+  state.totalSpent += price;
+  state.totalProfit = state.totalRevenue - state.totalSpent;
+  state.inventory.push(ownedCar);
+  state.selectedInventoryId = ownedCar.id;
   state.dayCars = state.dayCars.filter((c) => c.id !== car.id);
-  log(`Bought ${car.name} for ${fmt(price)}.`);
-  renderGarage();
-  showPanel(el.garagePanel);
+
+  log(`Bought ${car.name} for ${fmt(price)}. Inventory now ${state.inventory.length}.`);
+  recordSeriesPoint();
+  renderGraphs();
+  renderMarket();
+  showPanel(el.marketPanel);
 }
 
-function inspectOwnedCar() {
-  if (!state.ownedCar || state.inspected) {
-    return;
+function getSelectedInventoryCar() {
+  if (!state.selectedInventoryId) {
+    return null;
   }
-  if (state.money < CONFIG.inspectCost) {
-    log(`Cannot inspect: need ${fmt(CONFIG.inspectCost)}.`);
-    return;
-  }
+  return state.inventory.find((car) => car.id === state.selectedInventoryId) || null;
+}
 
-  state.money -= CONFIG.inspectCost;
-  state.inspected = true;
-  log("Inspection complete. Hidden faults revealed.");
+function selectInventoryCar(carId) {
+  state.selectedInventoryId = carId;
   renderGarage();
 }
 
-function repairFault(faultId) {
-  if (!state.ownedCar) {
+function inspectSelectedCar() {
+  const car = getSelectedInventoryCar();
+  if (!car || car.inspected) {
     return;
   }
-  if (state.repairedFaults.has(faultId)) {
+
+  const cost = Math.round(CONFIG.inspectCost * state.dailyEvent.inspectModifier);
+  if (state.money < cost) {
+    log(`Cannot inspect: need ${fmt(cost)}.`);
+    return;
+  }
+
+  state.money -= cost;
+  state.totalSpent += cost;
+  state.totalProfit = state.totalRevenue - state.totalSpent;
+  car.inspected = true;
+  log(`Inspection complete on ${car.name}. Hidden faults revealed.`);
+  recordSeriesPoint();
+  renderGraphs();
+  renderGarage();
+}
+
+function repairSelectedCarFault(faultId) {
+  const car = getSelectedInventoryCar();
+  if (!car) {
+    return;
+  }
+  if (car.repairedFaults.has(faultId)) {
     return;
   }
 
   const info = FAULTS[faultId];
-  if (state.money < info.repairCost) {
-    log(`Cannot repair ${info.label}: need ${fmt(info.repairCost)}.`);
+  const cost = Math.round(info.repairCost * state.dailyEvent.inspectModifier);
+  if (state.money < cost) {
+    log(`Cannot repair ${info.label}: need ${fmt(cost)}.`);
     return;
   }
 
-  state.money -= info.repairCost;
-  state.repairedFaults.add(faultId);
-  log(`Repaired ${info.label} for ${fmt(info.repairCost)}.`);
+  state.money -= cost;
+  state.totalSpent += cost;
+  state.totalProfit = state.totalRevenue - state.totalSpent;
+  car.repairedFaults.add(faultId);
+  log(`Repaired ${info.label} on ${car.name} for ${fmt(cost)}.`);
+  recordSeriesPoint();
+  renderGraphs();
   renderGarage();
 }
 
-function cleanCosmetic() {
-  const car = state.ownedCar;
+function cleanSelectedCarCosmetic() {
+  const car = getSelectedInventoryCar();
   if (!car) {
     return;
   }
+
   if (state.money < CONFIG.cosmeticCleanCost) {
     log(`Cannot clean: need ${fmt(CONFIG.cosmeticCleanCost)}.`);
     return;
   }
 
   state.money -= CONFIG.cosmeticCleanCost;
+  state.totalSpent += CONFIG.cosmeticCleanCost;
+  state.totalProfit = state.totalRevenue - state.totalSpent;
   car.cosmeticCondition = clamp(car.cosmeticCondition + 10, 0, 100);
-  log(`Quick cleaning done for ${fmt(CONFIG.cosmeticCleanCost)}.`);
+  log(`Quick cleaning done on ${car.name} for ${fmt(CONFIG.cosmeticCleanCost)}.`);
+  recordSeriesPoint();
+  renderGraphs();
   renderGarage();
+}
+
+function buyerFitBonus(buyer, car, unresolved) {
+  const unresolvedCount = unresolved.length;
+  let bonus = 0;
+
+  if (buyer.name === "Bargain Hunter") {
+    if (car.boughtFor < 4000) {
+      bonus += 0.1;
+    }
+    if (car.cosmeticCondition < 45) {
+      bonus -= 0.03;
+    }
+  }
+
+  if (buyer.name === "Picky Buyer") {
+    if (unresolvedCount === 0 && car.cosmeticCondition >= 70) {
+      bonus += 0.22;
+    }
+    if (unresolvedCount >= 2) {
+      bonus -= 0.25;
+    }
+  }
+
+  if (buyer.name === "Enthusiast") {
+    const majorUnresolved = unresolved.includes("engine") || unresolved.includes("transmission");
+    if (!majorUnresolved) {
+      bonus += 0.16;
+    } else {
+      bonus -= 0.16;
+    }
+  }
+
+  if (buyer.name === "Impulse Buyer") {
+    if (car.cosmeticCondition >= 78) {
+      bonus += 0.18;
+    }
+    if (car.cosmeticCondition <= 35) {
+      bonus -= 0.12;
+    }
+  }
+
+  return bonus;
+}
+
+function attemptSale(priceMode) {
+  const car = getSelectedInventoryCar();
+  const buyer = getCurrentBuyer();
+  if (!car || !buyer) {
+    return;
+  }
+
+  if (state.buyerServedToday) {
+    log("Buyer already handled today. End day for the next one.");
+    return;
+  }
+
+  let multiplier = CONFIG.selling.fairMultiplier;
+  if (priceMode === "quick") {
+    multiplier = CONFIG.selling.quickMultiplier;
+  } else if (priceMode === "premium") {
+    multiplier = CONFIG.selling.premiumMultiplier;
+  }
+
+  const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier;
+  let listPrice = Math.round(trueValue * multiplier);
+
+  const unresolved = unresolvedFaults(car);
+  const unresolvedPenalty = unresolved.reduce((sum, f) => sum + FAULTS[f].salePenalty, 0) * buyer.flawSensitivity;
+  const cosmeticPenalty = ((100 - car.cosmeticCondition) / 100) * buyer.cosmeticNeed;
+  const pricePressure = listPrice / Math.max(1, trueValue);
+
+  let sellChance = 0.72;
+  sellChance -= unresolvedPenalty * CONFIG.selling.unresolvedPenaltyWeight;
+  sellChance -= cosmeticPenalty * CONFIG.selling.cosmeticPenaltyWeight;
+  sellChance -= (pricePressure - buyer.tolerance) * CONFIG.selling.pricePenaltyWeight;
+  sellChance += buyerFitBonus(buyer, car, unresolved);
+  sellChance = clamp(sellChance, 0.03, 0.97);
+
+  state.money -= CONFIG.sellAttemptFee;
+  state.totalSpent += CONFIG.sellAttemptFee;
+
+  let outcome = "failed sale";
+  let finalPrice = 0;
+
+  if (Math.random() < sellChance) {
+    outcome = "sold instantly";
+    finalPrice = listPrice;
+  } else if (Math.random() < buyer.haggleChance) {
+    outcome = "buyer forced lower final price";
+    finalPrice = Math.round(listPrice * (CONFIG.selling.postHaggleMin + Math.random() * (CONFIG.selling.postHaggleMax - CONFIG.selling.postHaggleMin)));
+  } else if (priceMode !== "quick" && Math.random() < clamp(sellChance + 0.2, 0.08, 0.95)) {
+    outcome = "sold after price drop";
+    listPrice = Math.round(listPrice * 0.92);
+    finalPrice = listPrice;
+  }
+
+  if (finalPrice > 0) {
+    state.money += finalPrice;
+    state.totalRevenue += finalPrice;
+    state.totalProfit = state.totalRevenue - state.totalSpent;
+    state.saleHistory.push({ ...carComparableData(car), finalPrice });
+    state.inventory = state.inventory.filter((c) => c.id !== car.id);
+    if (state.selectedInventoryId === car.id) {
+      state.selectedInventoryId = state.inventory[0]?.id || null;
+    }
+    log(`${buyer.name} ${outcome}: ${car.name} sold for ${fmt(finalPrice)}.`);
+  } else {
+    state.totalProfit = state.totalRevenue - state.totalSpent;
+    log(`${buyer.name} ${outcome}: ${car.name} not sold. Car stays in inventory.`);
+  }
+
+  state.buyerServedToday = true;
+  recordSeriesPoint();
+  renderGraphs();
+
+  el.saleContent.innerHTML = `
+    <div class="card">
+      Buyer type: <strong>${buyer.name}</strong><br>
+      Buyer profile: ${buyer.profile}<br>
+      Pricing mode: ${priceMode}<br>
+      Listing price: ${fmt(listPrice)}<br>
+      Internal value model: ${fmt(trueValue)}<br>
+      Unresolved faults: ${unresolved.length ? unresolved.map((f) => FAULTS[f].label).join(", ") : "none"}<br>
+      Outcome: <strong>${outcome}</strong><br>
+      ${finalPrice > 0 ? `Final sale price: ${fmt(finalPrice)}` : "No sale"}
+    </div>
+  `;
+
+  renderTopbar();
+  showPanel(el.salePanel);
+}
+
+function renderInventoryList() {
+  el.inventoryList.innerHTML = "";
+  if (state.inventory.length === 0) {
+    el.inventoryList.innerHTML = "<div class=\"card\">Inventory empty. Buy cars in the market.</div>";
+    return;
+  }
+
+  state.inventory.forEach((car) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    const unresolved = unresolvedFaults(car);
+
+    card.innerHTML = `
+      <strong>${car.name}</strong>
+      | Bought: ${fmt(car.boughtFor)}
+      | Cosmetic: ${car.cosmeticCondition}/100
+      | Unresolved: ${unresolved.length}
+      | ${car.inspected ? "Inspected" : "Not inspected"}
+    `;
+
+    const btn = document.createElement("button");
+    btn.textContent = state.selectedInventoryId === car.id ? "Selected" : "Manage";
+    btn.disabled = state.selectedInventoryId === car.id;
+    btn.addEventListener("click", () => selectInventoryCar(car.id));
+    card.appendChild(document.createElement("br"));
+    card.appendChild(btn);
+    el.inventoryList.appendChild(card);
+  });
 }
 
 function renderGarage() {
   renderTopbar();
-  const car = state.ownedCar;
+  renderInventoryList();
+
+  const buyer = getCurrentBuyer();
+  const car = getSelectedInventoryCar();
   if (!car) {
+    el.garageContent.innerHTML = `<div class="card">No car selected. Current buyer: ${buyer ? buyer.name : "N/A"}.</div>`;
+    el.repairActions.innerHTML = "";
+    el.inspectBtn.disabled = true;
+    el.sellQuickBtn.disabled = true;
+    el.sellFairBtn.disabled = true;
+    el.sellPremiumBtn.disabled = true;
     return;
   }
 
-  const knownFaults = effectiveKnownFaults(car);
-  const allDiscovered = state.inspected ? discoveredFaults(car) : [...car.visibleFaults];
-  const unresolvedKnown = knownFaults.filter((f) => !state.repairedFaults.has(f));
+  const knownFaults = discoveredFaults(car);
+  const unresolvedKnown = knownFaults.filter((f) => !car.repairedFaults.has(f));
+  const notebook = notebookEstimate(car);
 
   el.garageContent.innerHTML = `
     <div class="card">
       <strong>${car.name}</strong><br>
-      Bought for: ${fmt(car.boughtFor)}<br>
+      Bought for: ${fmt(car.boughtFor)} (day ${car.purchaseDay})<br>
       Cosmetic: ${car.cosmeticCondition}/100<br>
       Known faults: ${knownFaults.length ? knownFaults.map((f) => FAULTS[f].label).join(", ") : "none"}<br>
-      Hidden faults: ${state.inspected ? "revealed" : "unknown"}<br>
-      Current true value estimate: ${fmt(calcTrueValue(car))}
+      Hidden faults: ${car.inspected ? "revealed" : "unknown"}<br>
+      Notebook estimate: ${notebook ? fmt(notebook) : "insufficient history"}<br>
+      Today buyer: ${buyer ? buyer.name : "N/A"} (${buyer ? buyer.profile : "-"})
     </div>
   `;
 
   el.repairActions.innerHTML = "";
-  allDiscovered.forEach((faultId) => {
+  knownFaults.forEach((faultId) => {
     const fault = FAULTS[faultId];
     const wrapped = document.createElement("div");
     wrapped.className = "card";
-    wrapped.innerHTML = `${fault.label} | Repair cost: ${fmt(fault.repairCost)} | Value gain if fixed: ~${fmt(fault.valueHit)}`;
+    wrapped.innerHTML = `${fault.label} | Repair cost: ${fmt(Math.round(fault.repairCost * state.dailyEvent.inspectModifier))} | Value gain if fixed: ~${fmt(fault.valueHit)}`;
 
     const btn = document.createElement("button");
-    if (state.repairedFaults.has(faultId)) {
+    if (car.repairedFaults.has(faultId)) {
       btn.disabled = true;
       btn.textContent = "Already Repaired";
     } else {
       btn.textContent = `Repair ${fault.label}`;
-      btn.addEventListener("click", () => repairFault(faultId));
+      btn.addEventListener("click", () => repairSelectedCarFault(faultId));
     }
     wrapped.appendChild(document.createElement("br"));
     wrapped.appendChild(btn);
@@ -449,77 +801,78 @@ function renderGarage() {
 
   const cleanRow = document.createElement("div");
   cleanRow.className = "card";
-  cleanRow.innerHTML = `Cosmetic cleaning | Cost: ${fmt(CONFIG.cosmeticCleanCost)} | Small resale bump`;
+  cleanRow.innerHTML = `Cosmetic cleaning | Cost: ${fmt(CONFIG.cosmeticCleanCost)} | Helps impulse/picky buyers`;
   const cleanBtn = document.createElement("button");
   cleanBtn.textContent = "Cheap Clean";
-  cleanBtn.addEventListener("click", cleanCosmetic);
+  cleanBtn.addEventListener("click", cleanSelectedCarCosmetic);
   cleanRow.appendChild(document.createElement("br"));
   cleanRow.appendChild(cleanBtn);
   el.repairActions.appendChild(cleanRow);
 
-  el.inspectBtn.disabled = state.inspected;
-  el.toSaleBtn.disabled = unresolvedKnown.length > 0 && state.money < 50;
+  el.inspectBtn.disabled = car.inspected;
+  const disableSaleButtons = state.buyerServedToday;
+  el.sellQuickBtn.disabled = disableSaleButtons;
+  el.sellFairBtn.disabled = disableSaleButtons;
+  el.sellPremiumBtn.disabled = disableSaleButtons;
+
+  if (unresolvedKnown.length > 0 && !car.inspected) {
+    // intentionally no-op: this keeps pressure to inspect before committing sale
+  }
 }
 
-function simulateSale() {
-  const car = state.ownedCar;
-  if (!car) {
+function recordSeriesPoint() {
+  state.series.money.push(state.money);
+  state.series.spent.push(state.totalSpent);
+  state.series.profit.push(state.totalProfit);
+
+  const maxPoints = 60;
+  if (state.series.money.length > maxPoints) {
+    state.series.money.shift();
+    state.series.spent.shift();
+    state.series.profit.shift();
+  }
+}
+
+function renderSpark(svgEl, data, color) {
+  const width = 700;
+  const height = 130;
+  svgEl.innerHTML = "";
+  if (data.length < 2) {
     return;
   }
 
-  const buyer = pick(BUYER_TYPES);
-  const trueVal = calcTrueValue(car) * (state.dailyEvent?.saleModifier || 1);
-  const markup = clamp(1.03 + (Math.random() * 0.14 - 0.04), CONFIG.selling.minListMarkup, CONFIG.selling.maxListMarkup);
-  let listPrice = Math.round(trueVal * markup);
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = Math.max(1, max - min);
 
-  const unresolved = unresolvedFaults(car);
-  const unresolvedPenalty = unresolved.reduce((sum, f) => sum + FAULTS[f].salePenalty, 0) * buyer.flawSensitivity;
-  const cosmeticPenalty = ((100 - car.cosmeticCondition) * CONFIG.selling.cosmeticPenaltyMultiplier) / 100;
-  const valueFit = listPrice / Math.max(1, trueVal);
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width;
+    const y = height - ((v - min) / range) * (height - 12) - 6;
+    return `${x},${y}`;
+  }).join(" ");
 
-  let baseSellChance = 0.85 - unresolvedPenalty - cosmeticPenalty - (valueFit - buyer.tolerance) * 0.7;
-  baseSellChance = clamp(baseSellChance, 0.05, 0.98);
+  const axis = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  axis.setAttribute("x1", "0");
+  axis.setAttribute("y1", String(height - 6));
+  axis.setAttribute("x2", String(width));
+  axis.setAttribute("y2", String(height - 6));
+  axis.setAttribute("stroke", "#ccc");
+  axis.setAttribute("stroke-width", "1");
 
-  let outcome = "failed sale";
-  let finalPrice = 0;
+  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  polyline.setAttribute("points", points);
+  polyline.setAttribute("fill", "none");
+  polyline.setAttribute("stroke", color);
+  polyline.setAttribute("stroke-width", "2");
 
-  if (Math.random() < baseSellChance) {
-    outcome = "sold instantly";
-    finalPrice = listPrice;
-  } else if (Math.random() < clamp(baseSellChance + 0.25, 0.1, 0.99)) {
-    outcome = "sold after price drop";
-    listPrice = Math.round(listPrice * CONFIG.selling.autoPriceDropRatio);
-    finalPrice = listPrice;
-  } else if (Math.random() < buyer.haggleChance) {
-    outcome = "buyer forced lower final price";
-    finalPrice = Math.round(listPrice * (0.85 + Math.random() * 0.08));
-  }
+  svgEl.appendChild(axis);
+  svgEl.appendChild(polyline);
+}
 
-  if (finalPrice > 0) {
-    state.money += finalPrice;
-    const profit = finalPrice - car.boughtFor;
-    state.totalProfit += profit;
-    log(`${buyer.name} ${outcome}: ${car.name} sold for ${fmt(finalPrice)} (${profit >= 0 ? "+" : ""}${fmt(profit)}).`);
-  } else {
-    state.totalProfit -= 150;
-    log(`${buyer.name} ${outcome}: no sale. Listing costs and hassle: -${fmt(150)}.`);
-  }
-
-  el.saleContent.innerHTML = `
-    <div class="card">
-      Buyer type: <strong>${buyer.name}</strong><br>
-      Listing price: ${fmt(listPrice)}<br>
-      Estimated real value: ${fmt(trueVal)}<br>
-      Unresolved faults: ${unresolved.length ? unresolved.map((f) => FAULTS[f].label).join(", ") : "none"}<br>
-      Outcome: <strong>${outcome}</strong><br>
-      ${finalPrice > 0 ? `Final sale price: ${fmt(finalPrice)}` : "Car not sold this round"}
-    </div>
-  `;
-
-  state.ownedCar = null;
-  state.selectedCar = null;
-  showPanel(el.salePanel);
-  renderTopbar();
+function renderGraphs() {
+  renderSpark(el.moneyGraph, state.series.money, "#3b82f6");
+  renderSpark(el.spentGraph, state.series.spent, "#ef4444");
+  renderSpark(el.profitGraph, state.series.profit, "#16a34a");
 }
 
 function endDay() {
@@ -534,10 +887,14 @@ function endDay() {
 
   state.day += 1;
   state.selectedCar = null;
+  state.buyerServedToday = false;
+  advanceBuyerQueue();
   generateDayCars();
+  recordSeriesPoint();
+  renderGraphs();
   renderMarket();
   showPanel(el.marketPanel);
-  log(`New day. ${state.dayCars.length} junkers hit the market.`);
+  log(`New day. ${state.dayCars.length} junkers listed. Buyer now: ${getCurrentBuyer().name}. Event: ${state.dailyEvent.name}.`);
 }
 
 function finishRun() {
@@ -548,8 +905,10 @@ function finishRun() {
       <strong>Run Over</strong><br>
       Days played: ${CONFIG.maxDays}<br>
       Final money: ${fmt(state.money)}<br>
-      Total trading profit: ${fmt(state.totalProfit)}<br>
-      Score: ${Math.round(state.totalProfit + state.money * 0.1)}
+      Total spent: ${fmt(state.totalSpent)}<br>
+      Total revenue: ${fmt(state.totalRevenue)}<br>
+      Total profit: ${fmt(state.totalProfit)}<br>
+      Unsold inventory: ${state.inventory.length}
     </div>
     <button id="restart-btn">Restart Run</button>
   `;
@@ -562,6 +921,14 @@ function finishRun() {
 
 // ==== Events ====
 el.nextDayBtn.addEventListener("click", endDay);
+el.toGarageFromMarketBtn.addEventListener("click", () => {
+  renderGarage();
+  showPanel(el.garagePanel);
+});
+el.toMarketFromGarageBtn.addEventListener("click", () => {
+  renderMarket();
+  showPanel(el.marketPanel);
+});
 el.offerLowball.addEventListener("click", () => attemptOffer("lowball"));
 el.offerFair.addEventListener("click", () => attemptOffer("fair"));
 el.offerAsking.addEventListener("click", () => attemptOffer("asking"));
@@ -572,15 +939,23 @@ el.walkAway.addEventListener("click", () => {
   state.selectedCar = null;
   showPanel(el.marketPanel);
 });
-el.inspectBtn.addEventListener("click", inspectOwnedCar);
-el.toSaleBtn.addEventListener("click", simulateSale);
-el.continueBtn.addEventListener("click", endDay);
+el.inspectBtn.addEventListener("click", inspectSelectedCar);
+el.sellQuickBtn.addEventListener("click", () => attemptSale("quick"));
+el.sellFairBtn.addEventListener("click", () => attemptSale("fair"));
+el.sellPremiumBtn.addEventListener("click", () => attemptSale("premium"));
+el.continueBtn.addEventListener("click", () => {
+  renderGarage();
+  showPanel(el.garagePanel);
+});
 
 // ==== Init ====
 function init() {
+  ensureBuyerQueue();
   generateDayCars();
+  recordSeriesPoint();
+  renderGraphs();
   renderMarket();
-  log(`Run started with ${fmt(state.money)}. ${state.dayCars.length} cars available.`);
+  log(`Run started with ${fmt(state.money)}. Buyer now: ${getCurrentBuyer().name}. Event: ${state.dailyEvent.name}.`);
 }
 
 init();

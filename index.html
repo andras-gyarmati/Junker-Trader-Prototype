@@ -14,6 +14,9 @@
     button { margin: 4px 4px 4px 0; }
     .log { white-space: pre-line; background: #111; color: #0f0; padding: 8px; min-height: 120px; }
     .small { color: #666; font-size: 12px; }
+    .graphs { background: #fff; border: 1px solid #ccc; padding: 12px; margin-bottom: 10px; }
+    .graph-wrap { margin-bottom: 10px; }
+    svg { background: #fafafa; border: 1px solid #bbb; width: 100%; max-width: 700px; height: 130px; }
   </style>
 </head>
 <body>
@@ -23,9 +26,11 @@
 
   <section id="market-panel" class="panel active">
     <h2>Market</h2>
+    <div id="buyer-forecast" class="card"></div>
     <div id="market-cars"></div>
-    <button id="next-day-btn">Skip Day</button>
-    <p class="small">Pick a car to start negotiation. You can only buy one car per day.</p>
+    <button id="to-garage-from-market-btn">Go To Garage</button>
+    <button id="next-day-btn">End Day</button>
+    <p class="small">No direct market estimate shown. Use your own sale history notebook.</p>
   </section>
 
   <section id="negotiation-panel" class="panel">
@@ -38,17 +43,37 @@
   </section>
 
   <section id="garage-panel" class="panel">
-    <h2>Garage</h2>
+    <h2>Garage / Inventory</h2>
+    <div id="inventory-list"></div>
     <div id="garage-content"></div>
     <div id="repair-actions"></div>
     <button id="inspect-btn">Inspect</button>
-    <button id="to-sale-btn">List Car For Sale</button>
+    <button id="sell-quick-btn">Sell Quick</button>
+    <button id="sell-fair-btn">Sell Fair</button>
+    <button id="sell-premium-btn">Sell Premium</button>
+    <button id="to-market-from-garage-btn">Back To Market</button>
   </section>
 
   <section id="sale-panel" class="panel">
     <h2>Sale Result</h2>
     <div id="sale-content"></div>
     <button id="continue-btn">Continue</button>
+  </section>
+
+  <section class="graphs">
+    <h3>Run Graphs</h3>
+    <div class="graph-wrap">
+      <div class="small">Money Balance</div>
+      <svg id="money-graph" viewBox="0 0 700 130" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="graph-wrap">
+      <div class="small">Total Spent</div>
+      <svg id="spent-graph" viewBox="0 0 700 130" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="graph-wrap">
+      <div class="small">Total Profit</div>
+      <svg id="profit-graph" viewBox="0 0 700 130" preserveAspectRatio="none"></svg>
+    </div>
   </section>
 
   <section>

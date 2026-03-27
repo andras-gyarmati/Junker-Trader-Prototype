@@ -12,10 +12,13 @@ const CONFIG = {
     lowballRatio: 0.72,
     fairRatio: 0.9,
     askingRatio: 1.0,
+    customMinRatio: 0.6,
+    customMaxRatio: 1.2,
     reofferFloorRatio: 0.88,
     lowballBaseAccept: 0.28,
     fairBaseAccept: 0.62,
-    askingBaseAccept: 0.92
+    askingBaseAccept: 0.92,
+    offendedLeaveBaseChance: 0.2
   },
   selling: {
     quickMultiplier: 0.92,
@@ -101,6 +104,7 @@ const state = {
   inventory: [],
   selectedCar: null,
   selectedInventoryId: null,
+  pendingSale: null,
   buyerQueue: [],
   dayBuyerDemand: 1,
   buyersRemainingToday: 1,
@@ -153,14 +157,27 @@ const el = {
   offerLowball: document.getElementById("offer-lowball"),
   offerFair: document.getElementById("offer-fair"),
   offerAsking: document.getElementById("offer-asking"),
+  offerSlider: document.getElementById("offer-slider"),
+  offerSliderLabel: document.getElementById("offer-slider-label"),
+  offerCustom: document.getElementById("offer-custom"),
   walkAway: document.getElementById("walk-away"),
   inspectBtn: document.getElementById("inspect-btn"),
+  sellSlider: document.getElementById("sell-slider"),
+  sellSliderLabel: document.getElementById("sell-slider-label"),
+  sellCustomBtn: document.getElementById("sell-custom-btn"),
   sellQuickBtn: document.getElementById("sell-quick-btn"),
   sellFairBtn: document.getElementById("sell-fair-btn"),
   sellPremiumBtn: document.getElementById("sell-premium-btn"),
   sellJunkyardBtn: document.getElementById("sell-junkyard-btn"),
+  acceptSaleBtn: document.getElementById("accept-sale-btn"),
+  rejectSaleBtn: document.getElementById("reject-sale-btn"),
   continueBtn: document.getElementById("continue-btn")
 };
+
+function syncSliderRangesFromConfig() {
+  el.offerSlider.min = String(Math.round(CONFIG.negotiation.customMinRatio * 100));
+  el.offerSlider.max = String(Math.round(CONFIG.negotiation.customMaxRatio * 100));
+}
 
 function randInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -504,6 +521,12 @@ function generateCar() {
 
   let askingPrice = baseMarketValue - visiblePenalty - hiddenPenalty + randInt(-400, 900);
   askingPrice = clamp(askingPrice, 550, baseMarketValue * 1.08);
+  const reserveRatio = clamp(
+    0.68 + sellerPersonality.patience * 0.16 + (Math.random() * 0.1 - 0.05),
+    0.66,
+    1.04
+  );
+  const reservePrice = Math.round(askingPrice * reserveRatio);
 
   return {
     id: makeId(),
@@ -517,7 +540,9 @@ function generateCar() {
     cosmeticCondition,
     riskScoreModifier,
     sellerPersonality,
-    lastRejectedOffer: 0
+    lastRejectedOffer: 0,
+    reservePrice,
+    offended: 0
   };
 }
 
@@ -669,10 +694,48 @@ function startNegotiation(carId) {
       Seller mood: ${car.sellerPersonality.name}
     </div>
   `;
+  el.offerSlider.value = String(Math.round(CONFIG.negotiation.fairRatio * 100));
+  updateOfferSliderLabel();
+  updateNegotiationButtons();
   showPanel(el.negotiationPanel);
 }
 
-function attemptOffer(type) {
+function getOfferFromSlider() {
+  const car = state.selectedCar;
+  if (!car) {
+    return 0;
+  }
+  const ratio = Number(el.offerSlider.value) / 100;
+  return Math.round(car.askingPrice * ratio);
+}
+
+function updateOfferSliderLabel() {
+  const car = state.selectedCar;
+  if (!car) {
+    el.offerSliderLabel.textContent = "No car selected.";
+    return;
+  }
+  const offer = getOfferFromSlider();
+  const pct = Number(el.offerSlider.value);
+  el.offerSliderLabel.textContent = `Offer: ${fmt(offer)} (${pct}% of asking ${fmt(car.askingPrice)})`;
+}
+
+function updateNegotiationButtons() {
+  const car = state.selectedCar;
+  if (!car) {
+    el.offerLowball.textContent = "Lowball";
+    el.offerFair.textContent = "Fair Offer";
+    el.offerAsking.textContent = "Pay Asking";
+    return;
+  }
+  const lowball = Math.round(car.askingPrice * CONFIG.negotiation.lowballRatio);
+  const fair = Math.round(car.askingPrice * CONFIG.negotiation.fairRatio);
+  el.offerLowball.textContent = `Lowball (${fmt(lowball)})`;
+  el.offerFair.textContent = `Fair Offer (${fmt(fair)})`;
+  el.offerAsking.textContent = `Pay Asking (${fmt(car.askingPrice)})`;
+}
+
+function attemptOffer(type, customOffer = null) {
   const car = state.selectedCar;
   if (!car) {
     return;
@@ -688,8 +751,18 @@ function attemptOffer(type) {
     baseAccept = CONFIG.negotiation.askingBaseAccept;
   }
 
-  const offer = Math.round(car.askingPrice * ratio);
-  trackAction("offer", { carId: car.id, name: car.name, type, offer, asking: car.askingPrice }, true);
+  let offer = Math.round(car.askingPrice * ratio);
+  if (type === "custom" && Number.isFinite(customOffer)) {
+    offer = Math.round(customOffer);
+  }
+  trackAction("offer", {
+    carId: car.id,
+    name: car.name,
+    type,
+    offer,
+    asking: car.askingPrice,
+    reservePrice: car.reservePrice
+  }, true);
   const trueValue = calcTrueValue({ ...car, repairedFaults: new Set(), inspected: true });
   const qualityBonus = clamp((trueValue / car.askingPrice - 1) * 0.25, -0.12, 0.12);
   const patienceBonus = (1 - car.sellerPersonality.patience) * 0.2;
@@ -707,10 +780,10 @@ function attemptOffer(type) {
     return;
   }
 
-  if (offer >= car.askingPrice) {
+  if (offer >= car.askingPrice || offer >= car.reservePrice) {
     buyCar(car, offer);
-    log("Seller accepted immediately because offer met/exceeded asking.");
-    trackAction("offer_accept_auto", { carId: car.id, offer }, true);
+    log("Seller accepted immediately because offer met seller expectation.");
+    trackAction("offer_accept_auto", { carId: car.id, offer, reservePrice: car.reservePrice }, true);
     return;
   }
 
@@ -721,8 +794,29 @@ function attemptOffer(type) {
   }
 
   car.lastRejectedOffer = offer;
+  car.offended += 1;
+  const badRatio = offer / Math.max(1, car.askingPrice);
+  const leaveChance = clamp(
+    CONFIG.negotiation.offendedLeaveBaseChance +
+      (car.sellerPersonality.patience - 1) * 0.28 +
+      Math.max(0, 0.84 - badRatio) * 0.75 +
+      car.offended * 0.08,
+    0.04,
+    0.92
+  );
+
+  if (badRatio <= 0.84 && Math.random() < leaveChance) {
+    state.dayCars = state.dayCars.filter((c) => c.id !== car.id);
+    log(`Seller got offended by ${fmt(offer)} and left with ${car.name}.`);
+    trackAction("offer_offended_leave", { carId: car.id, offer, leaveChance, offended: car.offended }, true);
+    state.selectedCar = null;
+    renderMarket();
+    showPanel(el.marketPanel);
+    return;
+  }
+
   log(`Seller rejected ${fmt(offer)} for ${car.name}.`);
-  trackAction("offer_reject", { carId: car.id, offer, acceptChance }, true);
+  trackAction("offer_reject", { carId: car.id, offer, acceptChance, offended: car.offended }, true);
   showPanel(el.marketPanel);
 }
 
@@ -910,11 +1004,28 @@ function salePriceMultiplierForMode(priceMode) {
   return CONFIG.selling.fairMultiplier;
 }
 
-function estimateExpectedSalePrice(car, buyer, priceMode = "fair") {
+function getSellMultiplierFromSlider() {
+  return Number(el.sellSlider.value) / 100;
+}
+
+function updateSellSliderLabel() {
+  const car = getSelectedInventoryCar();
+  const buyer = getCurrentBuyer();
+  if (!car || !buyer) {
+    el.sellSliderLabel.textContent = "No car selected.";
+    return;
+  }
+  const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier;
+  const multiplier = getSellMultiplierFromSlider();
+  const listPrice = Math.round(trueValue * multiplier);
+  el.sellSliderLabel.textContent = `List: ${fmt(listPrice)} (${Math.round(multiplier * 100)}% of internal value ${fmt(trueValue)})`;
+}
+
+function estimateExpectedSalePrice(car, buyer, priceMode = "fair", customMultiplier = null) {
   if (!buyer) {
     return 0;
   }
-  const multiplier = salePriceMultiplierForMode(priceMode);
+  const multiplier = customMultiplier ?? salePriceMultiplierForMode(priceMode);
   const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier;
   const listPrice = Math.round(trueValue * multiplier);
   const unresolved = unresolvedFaults(car);
@@ -958,6 +1069,14 @@ function projectedDealProfitAfterRepair(car, faultId) {
   };
 }
 
+function getPaidRepairCost(car, faultId) {
+  const entries = car.actionHistory.filter((w) => w.kind === "repair" && w.faultId === faultId);
+  if (!entries.length) {
+    return null;
+  }
+  return entries[entries.length - 1].amount;
+}
+
 function calcJunkyardPrice(car) {
   const unresolved = unresolvedFaults(car);
   const salvageBase = car.baseMarketValue * 0.22;
@@ -969,7 +1088,7 @@ function calcJunkyardPrice(car) {
   return Math.round(clamp(raw, 250, 4200));
 }
 
-function attemptSale(priceMode) {
+function attemptSale(priceMode, customMultiplier = null) {
   const car = getSelectedInventoryCar();
   const buyer = getCurrentBuyer();
   if (!car || !buyer) {
@@ -981,12 +1100,7 @@ function attemptSale(priceMode) {
     return;
   }
 
-  let multiplier = CONFIG.selling.fairMultiplier;
-  if (priceMode === "quick") {
-    multiplier = CONFIG.selling.quickMultiplier;
-  } else if (priceMode === "premium") {
-    multiplier = CONFIG.selling.premiumMultiplier;
-  }
+  const multiplier = customMultiplier ?? salePriceMultiplierForMode(priceMode);
 
   const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier;
   let listPrice = Math.round(trueValue * multiplier);
@@ -1025,42 +1139,34 @@ function attemptSale(priceMode) {
     finalPrice = listPrice;
   }
 
-  if (finalPrice > 0) {
-    car.actionHistory.push({ kind: "sell_success", day: state.day, amount: finalPrice, mode: priceMode });
-    state.money += finalPrice;
-    state.totalRevenue += finalPrice;
-    state.totalProfit = state.totalRevenue;
-    state.saleHistory.push({ ...carComparableData(car), finalPrice });
-    const dealProfit = finalPrice - car.totalInvested;
-    state.completedDeals.unshift({
-      id: car.id,
-      name: car.name,
-      purchaseDay: car.purchaseDay,
-      sellDay: state.day,
-      boughtFor: car.boughtFor,
-      invested: car.totalInvested,
-      salePrice: finalPrice,
-      dealProfit,
-      saleAttempts: car.saleAttempts,
-      buyerType: buyer.name,
-      mode: priceMode,
-      faultsFixed: [...car.repairedFaults],
-      allFaultsAtSale: allFaults(car),
-      unresolvedAtSale: unresolved,
-      referenceValueAtSale: car.baseMarketValue + (car.cosmeticCondition - 50) * 35,
-      workLog: [...car.actionHistory]
-    });
-    state.inventory = state.inventory.filter((c) => c.id !== car.id);
-    if (state.selectedInventoryId === car.id) {
-      state.selectedInventoryId = state.inventory[0]?.id || null;
-    }
-    log(`${buyer.name} ${outcome}: ${car.name} sold for ${fmt(finalPrice)}.`);
-    trackAction("sell_success", { carId: car.id, name: car.name, buyer: buyer.name, mode: priceMode, listPrice, finalPrice, invested: car.totalInvested, dealProfit }, true);
-  } else {
+  if (finalPrice <= 0) {
     car.actionHistory.push({ kind: "sell_fail", day: state.day, mode: priceMode });
     state.totalProfit = state.totalRevenue;
     log(`${buyer.name} ${outcome}: ${car.name} not sold. Car stays in inventory.`);
     trackAction("sell_fail", { carId: car.id, name: car.name, buyer: buyer.name, mode: priceMode, listPrice }, true);
+    state.pendingSale = null;
+  } else {
+    state.pendingSale = {
+      carId: car.id,
+      buyer,
+      priceMode,
+      multiplier,
+      listPrice,
+      finalPrice,
+      trueValue,
+      unresolved,
+      outcome
+    };
+    trackAction("sell_offer_received", {
+      carId: car.id,
+      name: car.name,
+      buyer: buyer.name,
+      mode: priceMode,
+      listPrice,
+      finalPrice,
+      outcome
+    }, true);
+    log(`${buyer.name} offered ${fmt(finalPrice)} for ${car.name}. Decide to accept or reject.`);
   }
 
   state.buyersRemainingToday = Math.max(0, state.buyersRemainingToday - 1);
@@ -1069,6 +1175,10 @@ function attemptSale(priceMode) {
   recordSeriesPoint();
   renderGraphs();
   renderDealHistory();
+
+  const pendingText = state.pendingSale
+    ? `<br><strong>Buyer offer:</strong> ${fmt(finalPrice)} (not final until you accept)`
+    : "";
 
   el.saleContent.innerHTML = `
     <div class="card">
@@ -1080,12 +1190,99 @@ function attemptSale(priceMode) {
       Internal value model: ${fmt(trueValue)}<br>
       Unresolved faults: ${unresolved.length ? unresolved.map((f) => FAULTS[f].label).join(", ") : "none"}<br>
       Outcome: <strong>${outcome}</strong><br>
-      ${finalPrice > 0 ? `Final sale price: ${fmt(finalPrice)}` : "No sale"}
+      ${finalPrice > 0 ? `Proposed final sale price: ${fmt(finalPrice)}` : "No sale"}
+      ${pendingText}
     </div>
   `;
 
+  el.acceptSaleBtn.style.display = state.pendingSale ? "inline-block" : "none";
+  el.rejectSaleBtn.style.display = state.pendingSale ? "inline-block" : "none";
+  el.continueBtn.disabled = Boolean(state.pendingSale);
   renderTopbar();
   showPanel(el.salePanel);
+}
+
+function resolvePendingSale(accept) {
+  const pending = state.pendingSale;
+  if (!pending) {
+    return;
+  }
+  const car = state.inventory.find((c) => c.id === pending.carId);
+  if (!car) {
+    state.pendingSale = null;
+    renderGarage();
+    showPanel(el.garagePanel);
+    return;
+  }
+
+  if (!accept) {
+    trackAction("sell_offer_rejected", {
+      carId: car.id,
+      name: car.name,
+      buyer: pending.buyer.name,
+      finalPrice: pending.finalPrice,
+      mode: pending.priceMode
+    }, true);
+    log(`Rejected ${pending.buyer.name} offer ${fmt(pending.finalPrice)} for ${car.name}.`);
+    state.pendingSale = null;
+    el.acceptSaleBtn.style.display = "none";
+    el.rejectSaleBtn.style.display = "none";
+    el.continueBtn.disabled = false;
+    renderTopbar();
+    renderGarage();
+    showPanel(el.garagePanel);
+    return;
+  }
+
+  car.actionHistory.push({ kind: "sell_success", day: state.day, amount: pending.finalPrice, mode: pending.priceMode });
+  state.money += pending.finalPrice;
+  state.totalRevenue += pending.finalPrice;
+  state.totalProfit = state.totalRevenue;
+  state.saleHistory.push({ ...carComparableData(car), finalPrice: pending.finalPrice });
+  const dealProfit = pending.finalPrice - car.totalInvested;
+  state.completedDeals.unshift({
+    id: car.id,
+    name: car.name,
+    purchaseDay: car.purchaseDay,
+    sellDay: state.day,
+    boughtFor: car.boughtFor,
+    invested: car.totalInvested,
+    salePrice: pending.finalPrice,
+    dealProfit,
+    saleAttempts: car.saleAttempts,
+    buyerType: pending.buyer.name,
+    mode: pending.priceMode,
+    faultsFixed: [...car.repairedFaults],
+    allFaultsAtSale: allFaults(car),
+    unresolvedAtSale: pending.unresolved,
+    referenceValueAtSale: car.baseMarketValue + (car.cosmeticCondition - 50) * 35,
+    workLog: [...car.actionHistory]
+  });
+  state.inventory = state.inventory.filter((c) => c.id !== car.id);
+  if (state.selectedInventoryId === car.id) {
+    state.selectedInventoryId = state.inventory[0]?.id || null;
+  }
+  trackAction("sell_success", {
+    carId: car.id,
+    name: car.name,
+    buyer: pending.buyer.name,
+    mode: pending.priceMode,
+    listPrice: pending.listPrice,
+    finalPrice: pending.finalPrice,
+    invested: car.totalInvested,
+    dealProfit
+  }, true);
+  log(`${pending.buyer.name} deal accepted: ${car.name} sold for ${fmt(pending.finalPrice)}.`);
+  state.pendingSale = null;
+  el.acceptSaleBtn.style.display = "none";
+  el.rejectSaleBtn.style.display = "none";
+  el.continueBtn.disabled = false;
+  recordSeriesPoint();
+  renderGraphs();
+  renderDealHistory();
+  renderTopbar();
+  renderGarage();
+  showPanel(el.garagePanel);
 }
 
 function sellSelectedToJunkyard() {
@@ -1179,7 +1376,9 @@ function renderGarage() {
     el.sellQuickBtn.disabled = true;
     el.sellFairBtn.disabled = true;
     el.sellPremiumBtn.disabled = true;
+    el.sellCustomBtn.disabled = true;
     el.sellJunkyardBtn.disabled = true;
+    el.sellSliderLabel.textContent = "No car selected.";
     return;
   }
 
@@ -1209,11 +1408,16 @@ function renderGarage() {
   knownFaults.forEach((faultId) => {
     const fault = FAULTS[faultId];
     const learned = estimateRepairValueGain(faultId);
-    const projected = projectedDealProfitAfterRepair(car, faultId);
     const wrapped = document.createElement("div");
     wrapped.className = "card";
-    wrapped.innerHTML = `${fault.label} | Repair cost: ${fmt(Math.round(fault.repairCost * state.dailyEvent.inspectModifier))} | Value gain if fixed: ~${fmt(learned.gain)} (${learned.confidence}, ${learned.samples} sample${learned.samples === 1 ? "" : "s"})<br>
-    Projected fair-mode deal P/L after this repair: ${projected.projectedProfit >= 0 ? "+" : ""}${fmt(projected.projectedProfit)}`;
+    if (car.repairedFaults.has(faultId)) {
+      const paid = getPaidRepairCost(car, faultId);
+      wrapped.innerHTML = `${fault.label} | Repaired | Paid: ${paid != null ? fmt(paid) : "n/a"} | Learned value gain: ~${fmt(learned.gain)} (${learned.confidence}, ${learned.samples} sample${learned.samples === 1 ? "" : "s"})`;
+    } else {
+      const projected = projectedDealProfitAfterRepair(car, faultId);
+      wrapped.innerHTML = `${fault.label} | Repair cost: ${fmt(Math.round(fault.repairCost * state.dailyEvent.inspectModifier))} | Value gain if fixed: ~${fmt(learned.gain)} (${learned.confidence}, ${learned.samples} sample${learned.samples === 1 ? "" : "s"})<br>
+      Projected fair-mode deal P/L after this repair: ${projected.projectedProfit >= 0 ? "+" : ""}${fmt(projected.projectedProfit)}`;
+    }
 
     const btn = document.createElement("button");
     if (car.repairedFaults.has(faultId)) {
@@ -1255,7 +1459,9 @@ function renderGarage() {
   el.sellQuickBtn.disabled = disableSaleButtons;
   el.sellFairBtn.disabled = disableSaleButtons;
   el.sellPremiumBtn.disabled = disableSaleButtons;
+  el.sellCustomBtn.disabled = disableSaleButtons;
   el.sellJunkyardBtn.disabled = false;
+  updateSellSliderLabel();
   if (disableSaleButtons) {
     el.repairActions.insertAdjacentHTML("afterbegin", "<div class=\"notice\">No buyers left today. End day in Market to continue selling. Junkyard is still available.</div>");
   }
@@ -1535,6 +1741,15 @@ el.offerAsking.addEventListener("click", () => {
   trackAction("ui_click", { control: "offer-asking" }, true);
   attemptOffer("asking");
 });
+el.offerSlider.addEventListener("input", () => {
+  trackAction("ui_input", { control: "offer-slider", value: Number(el.offerSlider.value) }, true);
+  updateOfferSliderLabel();
+});
+el.offerCustom.addEventListener("click", () => {
+  const offer = getOfferFromSlider();
+  trackAction("ui_click", { control: "offer-custom", offer }, true);
+  attemptOffer("custom", offer);
+});
 el.walkAway.addEventListener("click", () => {
   trackAction("ui_click", { control: "walk-away" }, true);
   if (state.selectedCar) {
@@ -1559,9 +1774,26 @@ el.sellPremiumBtn.addEventListener("click", () => {
   trackAction("ui_click", { control: "sell-premium-btn" }, true);
   attemptSale("premium");
 });
+el.sellSlider.addEventListener("input", () => {
+  trackAction("ui_input", { control: "sell-slider", value: Number(el.sellSlider.value) }, true);
+  updateSellSliderLabel();
+});
+el.sellCustomBtn.addEventListener("click", () => {
+  const mult = getSellMultiplierFromSlider();
+  trackAction("ui_click", { control: "sell-custom-btn", multiplier: mult }, true);
+  attemptSale("custom", mult);
+});
 el.sellJunkyardBtn.addEventListener("click", () => {
   trackAction("ui_click", { control: "sell-junkyard-btn" }, true);
   sellSelectedToJunkyard();
+});
+el.acceptSaleBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "accept-sale-btn" }, true);
+  resolvePendingSale(true);
+});
+el.rejectSaleBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "reject-sale-btn" }, true);
+  resolvePendingSale(false);
 });
 el.continueBtn.addEventListener("click", () => {
   trackAction("ui_click", { control: "continue-btn" }, true);
@@ -1571,6 +1803,10 @@ el.continueBtn.addEventListener("click", () => {
 
 // ==== Init ====
 function init() {
+  syncSliderRangesFromConfig();
+  el.acceptSaleBtn.style.display = "none";
+  el.rejectSaleBtn.style.display = "none";
+  el.continueBtn.disabled = false;
   ensureBuyerQueue();
   generateDayCars();
   recordSeriesPoint();

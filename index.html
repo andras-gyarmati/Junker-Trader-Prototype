@@ -41,6 +41,12 @@
   <section id="negotiation-panel" class="panel">
     <h2>Negotiation</h2>
     <div id="negotiation-content"></div>
+    <div class="card">
+      <strong>Custom Offer</strong><br>
+      <input id="offer-slider" type="range" min="60" max="120" value="90" />
+      <div id="offer-slider-label" class="small"></div>
+      <button id="offer-custom">Submit Custom Offer</button>
+    </div>
     <button id="offer-lowball">Lowball</button>
     <button id="offer-fair">Fair Offer</button>
     <button id="offer-asking">Pay Asking</button>
@@ -53,6 +59,12 @@
     <div id="garage-content"></div>
     <div id="repair-actions" class="cards-grid"></div>
     <button id="inspect-btn">Inspect</button>
+    <div class="card">
+      <strong>Custom List Price</strong><br>
+      <input id="sell-slider" type="range" min="70" max="130" value="100" />
+      <div id="sell-slider-label" class="small"></div>
+      <button id="sell-custom-btn">Offer Custom Price</button>
+    </div>
     <button id="sell-quick-btn">Sell Quick</button>
     <button id="sell-fair-btn">Sell Fair</button>
     <button id="sell-premium-btn">Sell Premium</button>
@@ -63,6 +75,8 @@
   <section id="sale-panel" class="panel">
     <h2>Sale Result</h2>
     <div id="sale-content"></div>
+    <button id="accept-sale-btn">Accept Offer</button>
+    <button id="reject-sale-btn">Reject Offer</button>
     <button id="continue-btn">Continue</button>
   </section>
 

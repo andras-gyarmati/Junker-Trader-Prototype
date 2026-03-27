@@ -3,3 +3,4 @@ package.json
 package-lock.json
 scripts/
 .DS_Store
+run_logs/

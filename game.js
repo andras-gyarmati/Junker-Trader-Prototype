@@ -12,6 +12,7 @@ const CONFIG = {
     lowballRatio: 0.72,
     fairRatio: 0.9,
     askingRatio: 1.0,
+    reofferFloorRatio: 0.88,
     lowballBaseAccept: 0.28,
     fairBaseAccept: 0.62,
     askingBaseAccept: 0.92
@@ -158,6 +159,7 @@ const el = {
   sellQuickBtn: document.getElementById("sell-quick-btn"),
   sellFairBtn: document.getElementById("sell-fair-btn"),
   sellPremiumBtn: document.getElementById("sell-premium-btn"),
+  sellJunkyardBtn: document.getElementById("sell-junkyard-btn"),
   continueBtn: document.getElementById("continue-btn")
 };
 
@@ -349,6 +351,7 @@ function formatWorkLogEntry(w) {
   if (w.kind === "clean") return `${dayLabel}:clean:-${fmt(w.amount)}`;
   if (w.kind === "sell_attempt") return `${dayLabel}:sellAttempt:${w.mode}:-${fmt(w.amount)}`;
   if (w.kind === "sell_success") return `${dayLabel}:sell:+${fmt(w.amount)}`;
+  if (w.kind === "junkyard_sale") return `${dayLabel}:junkyard:+${fmt(w.amount)}`;
   if (w.kind === "sell_fail") return `${dayLabel}:sell:failed`;
   return `${dayLabel}:${w.kind}`;
 }
@@ -688,7 +691,7 @@ function attemptOffer(type) {
     return;
   }
 
-  if (offer <= car.lastRejectedOffer) {
+  if (offer <= car.lastRejectedOffer * CONFIG.negotiation.reofferFloorRatio) {
     log(`Seller rejects ${fmt(offer)} immediately after earlier higher offer.`);
     trackAction("offer_reject_floor", { carId: car.id, offer, lastRejectedOffer: car.lastRejectedOffer }, true);
     showPanel(el.marketPanel);
@@ -708,7 +711,7 @@ function attemptOffer(type) {
     return;
   }
 
-  car.lastRejectedOffer = Math.max(car.lastRejectedOffer || 0, offer);
+  car.lastRejectedOffer = offer;
   log(`Seller rejected ${fmt(offer)} for ${car.name}.`);
   trackAction("offer_reject", { carId: car.id, offer, acceptChance }, true);
   showPanel(el.marketPanel);
@@ -886,6 +889,71 @@ function buyerFitBonus(buyer, car, unresolved) {
   return bonus;
 }
 
+function salePriceMultiplierForMode(priceMode) {
+  if (priceMode === "quick") return CONFIG.selling.quickMultiplier;
+  if (priceMode === "premium") return CONFIG.selling.premiumMultiplier;
+  return CONFIG.selling.fairMultiplier;
+}
+
+function estimateExpectedSalePrice(car, buyer, priceMode = "fair") {
+  if (!buyer) {
+    return 0;
+  }
+  const multiplier = salePriceMultiplierForMode(priceMode);
+  const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier;
+  const listPrice = Math.round(trueValue * multiplier);
+  const unresolved = unresolvedFaults(car);
+  const unresolvedPenalty = unresolved.reduce((sum, f) => sum + FAULTS[f].salePenalty, 0) * buyer.flawSensitivity;
+  const cosmeticPenalty = ((100 - car.cosmeticCondition) / 100) * buyer.cosmeticNeed;
+  const pricePressure = listPrice / Math.max(1, trueValue);
+
+  let sellChance = 0.72;
+  sellChance -= unresolvedPenalty * CONFIG.selling.unresolvedPenaltyWeight;
+  sellChance -= cosmeticPenalty * CONFIG.selling.cosmeticPenaltyWeight;
+  sellChance -= (pricePressure - buyer.tolerance) * CONFIG.selling.pricePenaltyWeight;
+  sellChance += buyerFitBonus(buyer, car, unresolved);
+  sellChance = clamp(sellChance, 0.03, 0.97);
+
+  const hagglePrice = Math.round(listPrice * ((CONFIG.selling.postHaggleMin + CONFIG.selling.postHaggleMax) / 2));
+  const dropPrice = Math.round(listPrice * 0.92);
+  const sellFailChance = 1 - sellChance;
+  const fallbackSellChance = clamp(sellChance + 0.2, 0.08, 0.95);
+
+  const expected = (sellChance * listPrice) +
+    (sellFailChance * buyer.haggleChance * hagglePrice) +
+    (sellFailChance * (1 - buyer.haggleChance) * fallbackSellChance * dropPrice);
+  return Math.round(expected);
+}
+
+function projectedDealProfitAfterRepair(car, faultId) {
+  const buyer = getCurrentBuyer();
+  const simulated = {
+    ...car,
+    repairedFaults: new Set(car.repairedFaults)
+  };
+  simulated.repairedFaults.add(faultId);
+
+  const repairCost = Math.round(FAULTS[faultId].repairCost * state.dailyEvent.inspectModifier);
+  const expectedSale = estimateExpectedSalePrice(simulated, buyer, "fair");
+  const projectedProfit = expectedSale - (car.totalInvested + repairCost + CONFIG.sellAttemptFee);
+  return {
+    expectedSale,
+    projectedProfit,
+    repairCost
+  };
+}
+
+function calcJunkyardPrice(car) {
+  const unresolved = unresolvedFaults(car);
+  const salvageBase = car.baseMarketValue * 0.22;
+  const repairedBonus = car.repairedFaults.size * 110;
+  const unresolvedPenalty = unresolved.reduce((sum, f) => sum + FAULTS[f].valueHit * 0.1, 0);
+  const cosmeticBonus = (car.cosmeticCondition - 50) * 8;
+  const inspectedBonus = car.inspected ? 120 : 0;
+  const raw = salvageBase + repairedBonus + cosmeticBonus + inspectedBonus - unresolvedPenalty;
+  return Math.round(clamp(raw, 250, 4200));
+}
+
 function attemptSale(priceMode) {
   const car = getSelectedInventoryCar();
   const buyer = getCurrentBuyer();
@@ -1005,6 +1073,51 @@ function attemptSale(priceMode) {
   showPanel(el.salePanel);
 }
 
+function sellSelectedToJunkyard() {
+  const car = getSelectedInventoryCar();
+  if (!car) {
+    return;
+  }
+
+  const payout = calcJunkyardPrice(car);
+  car.actionHistory.push({ kind: "junkyard_sale", day: state.day, amount: payout });
+  state.money += payout;
+  state.totalRevenue += payout;
+  state.totalProfit = state.totalRevenue;
+
+  const dealProfit = payout - car.totalInvested;
+  state.completedDeals.unshift({
+    id: car.id,
+    name: car.name,
+    purchaseDay: car.purchaseDay,
+    sellDay: state.day,
+    boughtFor: car.boughtFor,
+    invested: car.totalInvested,
+    salePrice: payout,
+    dealProfit,
+    saleAttempts: car.saleAttempts,
+    buyerType: "Junkyard",
+    mode: "junkyard",
+    faultsFixed: [...car.repairedFaults],
+    allFaultsAtSale: allFaults(car),
+    unresolvedAtSale: unresolvedFaults(car),
+    referenceValueAtSale: car.baseMarketValue + (car.cosmeticCondition - 50) * 35,
+    workLog: [...car.actionHistory]
+  });
+
+  state.inventory = state.inventory.filter((c) => c.id !== car.id);
+  if (state.selectedInventoryId === car.id) {
+    state.selectedInventoryId = state.inventory[0]?.id || null;
+  }
+  log(`Sold ${car.name} to junkyard for ${fmt(payout)} (${dealProfit >= 0 ? "+" : ""}${fmt(dealProfit)}).`);
+  trackAction("junkyard_sale", { carId: car.id, name: car.name, payout, invested: car.totalInvested, dealProfit }, true);
+
+  recordSeriesPoint();
+  renderGraphs();
+  renderDealHistory();
+  renderGarage();
+}
+
 function renderInventoryList() {
   el.inventoryList.innerHTML = "";
   if (state.inventory.length === 0) {
@@ -1051,6 +1164,7 @@ function renderGarage() {
     el.sellQuickBtn.disabled = true;
     el.sellFairBtn.disabled = true;
     el.sellPremiumBtn.disabled = true;
+    el.sellJunkyardBtn.disabled = true;
     return;
   }
 
@@ -1079,9 +1193,11 @@ function renderGarage() {
   knownFaults.forEach((faultId) => {
     const fault = FAULTS[faultId];
     const learned = estimateRepairValueGain(faultId);
+    const projected = projectedDealProfitAfterRepair(car, faultId);
     const wrapped = document.createElement("div");
     wrapped.className = "card";
-    wrapped.innerHTML = `${fault.label} | Repair cost: ${fmt(Math.round(fault.repairCost * state.dailyEvent.inspectModifier))} | Value gain if fixed: ~${fmt(learned.gain)} (${learned.confidence}, ${learned.samples} sample${learned.samples === 1 ? "" : "s"})`;
+    wrapped.innerHTML = `${fault.label} | Repair cost: ${fmt(Math.round(fault.repairCost * state.dailyEvent.inspectModifier))} | Value gain if fixed: ~${fmt(learned.gain)} (${learned.confidence}, ${learned.samples} sample${learned.samples === 1 ? "" : "s"})<br>
+    Projected fair-mode deal P/L after this repair: ${projected.projectedProfit >= 0 ? "+" : ""}${fmt(projected.projectedProfit)}`;
 
     const btn = document.createElement("button");
     if (car.repairedFaults.has(faultId)) {
@@ -1120,6 +1236,7 @@ function renderGarage() {
   el.sellQuickBtn.disabled = disableSaleButtons;
   el.sellFairBtn.disabled = disableSaleButtons;
   el.sellPremiumBtn.disabled = disableSaleButtons;
+  el.sellJunkyardBtn.disabled = false;
 
   if (unresolvedKnown.length > 0 && !car.inspected) {
     // intentionally no-op: this keeps pressure to inspect before committing sale
@@ -1364,6 +1481,10 @@ el.sellFairBtn.addEventListener("click", () => {
 el.sellPremiumBtn.addEventListener("click", () => {
   trackAction("ui_click", { control: "sell-premium-btn" }, true);
   attemptSale("premium");
+});
+el.sellJunkyardBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "sell-junkyard-btn" }, true);
+  sellSelectedToJunkyard();
 });
 el.continueBtn.addEventListener("click", () => {
   trackAction("ui_click", { control: "continue-btn" }, true);

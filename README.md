@@ -19,11 +19,13 @@ No build tools, backend, or persistence.
 - Daily buyer demand varies (1-4 buyers/day with event modifiers), so you can sell multiple cars in one day.
 - You can buy and hold multiple cars in inventory.
 - Selling has pricing modes (`quick`, `fair`, `premium`) with buyer-dependent outcomes.
+- Added `Sell To Junkyard` liquidation path for stuck inventory.
 - Daily event is shown clearly in top bar and buyer forecast card.
 - Added run graphs for money, total spent, and total revenue.
 - Added completed deal stats per car (buy day, sell day, invested, sale price, deal P/L, ROI).
 - Cars now show internal work logs (inspection/repair/clean/sell attempts).
 - Fault repair "value gain if fixed" is now learned from sold-car outcomes (blended with fallback defaults).
+- Repair rows now show projected fair-mode deal P/L after each repair (quick planning aid).
 - Run data is continuously persisted after each user action.
 - Data is written automatically to origin-private files (OPFS) with no picker:
   `junker-trader-log-<timestamp>.json` and `junker-trader-log-<timestamp>-actions.ndjson`.

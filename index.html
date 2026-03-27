@@ -62,8 +62,6 @@
 
   <section class="graphs">
     <h3>Run Graphs</h3>
-    <button id="export-data-btn">Export Run Data</button>
-    <span id="export-status" class="small"></span>
     <div class="graph-wrap">
       <div class="small">Money Balance</div>
       <svg id="money-graph" viewBox="0 0 700 130" preserveAspectRatio="none"></svg>
@@ -81,6 +79,15 @@
   <section class="graphs">
     <h3>Completed Deals</h3>
     <div id="deal-history" class="small"></div>
+  </section>
+
+  <section class="graphs">
+    <h3>Log Files</h3>
+    <div class="small">
+      Run JSON: <a id="run-log-link" href="#" download>not ready</a><br>
+      Actions NDJSON: <a id="actions-log-link" href="#" download>not ready</a><br>
+      <span id="persistence-status">Persistence: initializing</span>
+    </div>
   </section>
 
   <section>

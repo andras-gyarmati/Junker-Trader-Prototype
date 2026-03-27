@@ -21,7 +21,11 @@ No build tools, backend, or persistence.
 - Daily event is shown clearly in top bar and buyer forecast card.
 - Added run graphs for money, total spent, and total revenue.
 - Added completed deal stats per car (buy day, sell day, invested, sale price, deal P/L, ROI).
-- Added dated run-data export (`junker-trader-run-<timestamp>.json`) with logs + actions.
+- Run data is continuously persisted after each user action.
+- Data is written automatically to origin-private files (OPFS) with no picker:
+  `junker-trader-log-<timestamp>.json` and `junker-trader-log-<timestamp>-actions.ndjson`.
+- UI shows clickable "Log Files" links for the latest JSON and NDJSON snapshots.
+- Fallback is `localStorage` key `junker_trader_latest_run`.
 
 ## Tweak Values
 

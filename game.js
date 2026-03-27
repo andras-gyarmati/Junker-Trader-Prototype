@@ -105,6 +105,14 @@ const state = {
   saleHistory: [],
   completedDeals: [],
   actions: [],
+  saveSuggestedName: `junker-trader-log-${new Date().toISOString().replace(/[:.]/g, "-")}`,
+  savePending: false,
+  saveInFlight: false,
+  opfsReady: false,
+  opfsDir: null,
+  runBlobUrl: null,
+  actionsBlobUrl: null,
+  persistenceMode: "none",
   logLines: [],
   runOver: false,
   dailyEvent: null,
@@ -132,8 +140,9 @@ const el = {
   saleContent: document.getElementById("sale-content"),
   log: document.getElementById("event-log"),
   dealHistory: document.getElementById("deal-history"),
-  exportDataBtn: document.getElementById("export-data-btn"),
-  exportStatus: document.getElementById("export-status"),
+  runLogLink: document.getElementById("run-log-link"),
+  actionsLogLink: document.getElementById("actions-log-link"),
+  persistenceStatus: document.getElementById("persistence-status"),
   moneyGraph: document.getElementById("money-graph"),
   spentGraph: document.getElementById("spent-graph"),
   profitGraph: document.getElementById("profit-graph"),
@@ -171,19 +180,117 @@ function balanceDelta() {
   return state.money - CONFIG.startingMoney;
 }
 
-function trackAction(type, data = {}) {
+function trackAction(type, data = {}, persistAfter = false) {
   state.actions.push({
     t: new Date().toISOString(),
     day: state.day,
     type,
     ...data
   });
+  if (persistAfter) {
+    schedulePersistence();
+  }
+}
+
+async function ensureOpfsReady() {
+  if (state.opfsReady) {
+    return true;
+  }
+  if (!navigator.storage || !navigator.storage.getDirectory) {
+    state.persistenceMode = "localStorage";
+    return false;
+  }
+  try {
+    state.opfsDir = await navigator.storage.getDirectory();
+    state.opfsReady = true;
+    state.persistenceMode = "opfs";
+    return true;
+  } catch (_err) {
+    state.persistenceMode = "localStorage";
+    return false;
+  }
+}
+
+async function persistRunDataNow() {
+  const payload = buildExportData();
+  const json = JSON.stringify(payload);
+  const ndjson = state.actions.map((a) => JSON.stringify(a)).join("\n");
+
+  if (await ensureOpfsReady()) {
+    const runFile = await state.opfsDir.getFileHandle(`${state.saveSuggestedName}.json`, { create: true });
+    const writable = await runFile.createWritable();
+    await writable.write(json);
+    await writable.close();
+    const actionsFile = await state.opfsDir.getFileHandle(`${state.saveSuggestedName}-actions.ndjson`, { create: true });
+    const actionsWritable = await actionsFile.createWritable();
+    await actionsWritable.write(ndjson);
+    await actionsWritable.close();
+    renderPersistenceLinks(json, ndjson);
+    return;
+  }
+
+  localStorage.setItem("junker_trader_latest_run", json);
+  renderPersistenceLinks(json, ndjson);
+}
+
+function schedulePersistence() {
+  state.savePending = true;
+  if (state.saveInFlight) {
+    return;
+  }
+
+  state.saveInFlight = true;
+  setTimeout(async () => {
+    while (state.savePending) {
+      state.savePending = false;
+      try {
+        await persistRunDataNow();
+      } catch (_err) {
+        state.persistenceMode = "localStorage";
+        try {
+          localStorage.setItem("junker_trader_latest_run", JSON.stringify(buildExportData()));
+        } catch (_err2) {
+          // best effort only
+        }
+      }
+    }
+    state.saveInFlight = false;
+  }, 0);
 }
 
 function log(msg) {
   state.logLines.unshift(`[Day ${state.day}] ${msg}`);
   el.log.textContent = state.logLines.join("\n");
   trackAction("log", { msg });
+}
+
+function renderPersistenceLinks(runJson, actionsNdjson) {
+  if (!el.runLogLink || !el.actionsLogLink || !el.persistenceStatus) {
+    return;
+  }
+
+  if (state.runBlobUrl) {
+    URL.revokeObjectURL(state.runBlobUrl);
+  }
+  if (state.actionsBlobUrl) {
+    URL.revokeObjectURL(state.actionsBlobUrl);
+  }
+
+  state.runBlobUrl = URL.createObjectURL(new Blob([runJson], { type: "application/json" }));
+  state.actionsBlobUrl = URL.createObjectURL(new Blob([actionsNdjson], { type: "application/x-ndjson" }));
+
+  const runName = `${state.saveSuggestedName}.json`;
+  const actionsName = `${state.saveSuggestedName}-actions.ndjson`;
+
+  el.runLogLink.href = state.runBlobUrl;
+  el.runLogLink.download = runName;
+  el.runLogLink.textContent = runName;
+
+  el.actionsLogLink.href = state.actionsBlobUrl;
+  el.actionsLogLink.download = actionsName;
+  el.actionsLogLink.textContent = actionsName;
+
+  el.persistenceStatus.textContent = `Persistence: ${state.persistenceMode}`;
 }
 
 function showPanel(panel) {
@@ -458,7 +565,10 @@ function renderMarket() {
 
     const btn = document.createElement("button");
     btn.textContent = "Negotiate";
-    btn.addEventListener("click", () => startNegotiation(car.id));
+    btn.addEventListener("click", () => {
+      trackAction("ui_click", { control: "negotiate-btn", carId: car.id, name: car.name }, true);
+      startNegotiation(car.id);
+    });
 
     card.appendChild(document.createElement("br"));
     card.appendChild(btn);
@@ -504,7 +614,7 @@ function attemptOffer(type) {
   }
 
   const offer = Math.round(car.askingPrice * ratio);
-  trackAction("offer", { carId: car.id, name: car.name, type, offer, asking: car.askingPrice });
+  trackAction("offer", { carId: car.id, name: car.name, type, offer, asking: car.askingPrice }, true);
   const trueValue = calcTrueValue({ ...car, repairedFaults: new Set(), inspected: true });
   const qualityBonus = clamp((trueValue / car.askingPrice - 1) * 0.25, -0.12, 0.12);
   const patienceBonus = (1 - car.sellerPersonality.patience) * 0.2;
@@ -517,7 +627,7 @@ function attemptOffer(type) {
 
   if (offer <= car.lastRejectedOffer) {
     log(`Seller rejects ${fmt(offer)} immediately after earlier higher offer.`);
-    trackAction("offer_reject_floor", { carId: car.id, offer, lastRejectedOffer: car.lastRejectedOffer });
+    trackAction("offer_reject_floor", { carId: car.id, offer, lastRejectedOffer: car.lastRejectedOffer }, true);
     showPanel(el.marketPanel);
     return;
   }
@@ -525,19 +635,19 @@ function attemptOffer(type) {
   if (offer >= car.askingPrice) {
     buyCar(car, offer);
     log("Seller accepted immediately because offer met/exceeded asking.");
-    trackAction("offer_accept_auto", { carId: car.id, offer });
+    trackAction("offer_accept_auto", { carId: car.id, offer }, true);
     return;
   }
 
   if (Math.random() < acceptChance) {
     buyCar(car, offer);
-    trackAction("offer_accept", { carId: car.id, offer, acceptChance });
+    trackAction("offer_accept", { carId: car.id, offer, acceptChance }, true);
     return;
   }
 
   car.lastRejectedOffer = Math.max(car.lastRejectedOffer || 0, offer);
   log(`Seller rejected ${fmt(offer)} for ${car.name}.`);
-  trackAction("offer_reject", { carId: car.id, offer, acceptChance });
+  trackAction("offer_reject", { carId: car.id, offer, acceptChance }, true);
   showPanel(el.marketPanel);
 }
 
@@ -565,7 +675,7 @@ function buyCar(car, price) {
   state.dayCars = state.dayCars.filter((c) => c.id !== car.id);
 
   log(`Bought ${car.name} for ${fmt(price)}. Inventory now ${state.inventory.length}.`);
-  trackAction("buy", { carId: car.id, name: car.name, price });
+  trackAction("buy", { carId: car.id, name: car.name, price }, true);
   recordSeriesPoint();
   renderGraphs();
   renderMarket();
@@ -604,7 +714,7 @@ function inspectSelectedCar() {
   car.actionHistory.push({ kind: "inspect", day: state.day, amount: cost });
   car.inspected = true;
   log(`Inspection complete on ${car.name}. Hidden faults revealed.`);
-  trackAction("inspect", { carId: car.id, name: car.name, cost });
+  trackAction("inspect", { carId: car.id, name: car.name, cost }, true);
   recordSeriesPoint();
   renderGraphs();
   renderGarage();
@@ -639,7 +749,7 @@ function repairSelectedCarFault(faultId) {
   car.actionHistory.push({ kind: "repair", day: state.day, amount: cost, faultId });
   car.repairedFaults.add(faultId);
   log(`Repaired ${info.label} on ${car.name} for ${fmt(cost)}.`);
-  trackAction("repair", { carId: car.id, name: car.name, faultId, cost });
+  trackAction("repair", { carId: car.id, name: car.name, faultId, cost }, true);
   recordSeriesPoint();
   renderGraphs();
   renderGarage();
@@ -664,7 +774,7 @@ function cleanSelectedCarCosmetic() {
   car.actionHistory.push({ kind: "clean", day: state.day, amount: CONFIG.cosmeticCleanCost });
   car.cosmeticCondition = clamp(car.cosmeticCondition + 10, 0, 100);
   log(`Quick cleaning done on ${car.name} for ${fmt(CONFIG.cosmeticCleanCost)}.`);
-  trackAction("clean", { carId: car.id, name: car.name, cost: CONFIG.cosmeticCleanCost });
+  trackAction("clean", { carId: car.id, name: car.name, cost: CONFIG.cosmeticCleanCost }, true);
   recordSeriesPoint();
   renderGraphs();
   renderGarage();
@@ -794,11 +904,11 @@ function attemptSale(priceMode) {
       state.selectedInventoryId = state.inventory[0]?.id || null;
     }
     log(`${buyer.name} ${outcome}: ${car.name} sold for ${fmt(finalPrice)}.`);
-    trackAction("sell_success", { carId: car.id, name: car.name, buyer: buyer.name, mode: priceMode, listPrice, finalPrice, invested: car.totalInvested, dealProfit });
+    trackAction("sell_success", { carId: car.id, name: car.name, buyer: buyer.name, mode: priceMode, listPrice, finalPrice, invested: car.totalInvested, dealProfit }, true);
   } else {
     state.totalProfit = state.totalRevenue;
     log(`${buyer.name} ${outcome}: ${car.name} not sold. Car stays in inventory.`);
-    trackAction("sell_fail", { carId: car.id, name: car.name, buyer: buyer.name, mode: priceMode, listPrice });
+    trackAction("sell_fail", { carId: car.id, name: car.name, buyer: buyer.name, mode: priceMode, listPrice }, true);
   }
 
   state.buyerServedToday = true;
@@ -846,7 +956,10 @@ function renderInventoryList() {
     const btn = document.createElement("button");
     btn.textContent = state.selectedInventoryId === car.id ? "Selected" : "Manage";
     btn.disabled = state.selectedInventoryId === car.id;
-    btn.addEventListener("click", () => selectInventoryCar(car.id));
+    btn.addEventListener("click", () => {
+      trackAction("ui_click", { control: "manage-car-btn", carId: car.id, name: car.name }, true);
+      selectInventoryCar(car.id);
+    });
     card.appendChild(document.createElement("br"));
     card.appendChild(btn);
     el.inventoryList.appendChild(card);
@@ -902,7 +1015,10 @@ function renderGarage() {
       btn.textContent = "Blocked By Mechanic Strike";
     } else {
       btn.textContent = `Repair ${fault.label}`;
-      btn.addEventListener("click", () => repairSelectedCarFault(faultId));
+      btn.addEventListener("click", () => {
+        trackAction("ui_click", { control: "repair-btn", carId: car.id, faultId }, true);
+        repairSelectedCarFault(faultId);
+      });
     }
     wrapped.appendChild(document.createElement("br"));
     wrapped.appendChild(btn);
@@ -914,7 +1030,10 @@ function renderGarage() {
   cleanRow.innerHTML = `Cosmetic cleaning | Cost: ${fmt(CONFIG.cosmeticCleanCost)} | Helps impulse/picky buyers`;
   const cleanBtn = document.createElement("button");
   cleanBtn.textContent = "Cheap Clean";
-  cleanBtn.addEventListener("click", cleanSelectedCarCosmetic);
+  cleanBtn.addEventListener("click", () => {
+    trackAction("ui_click", { control: "cheap-clean-btn", carId: car.id }, true);
+    cleanSelectedCarCosmetic();
+  });
   cleanRow.appendChild(document.createElement("br"));
   cleanRow.appendChild(cleanBtn);
   el.repairActions.appendChild(cleanRow);
@@ -1027,7 +1146,8 @@ function buildExportData() {
       revenue: state.totalRevenue,
       spent: state.totalSpent,
       balanceDelta: balanceDelta(),
-      inventoryCount: state.inventory.length
+      inventoryCount: state.inventory.length,
+      persistenceMode: state.persistenceMode
     },
     series: state.series,
     completedDeals: state.completedDeals,
@@ -1049,24 +1169,6 @@ function buildExportData() {
   };
 }
 
-function exportRunData(auto = false) {
-  const payload = buildExportData();
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const filename = `junker-trader-run-${stamp}.json`;
-  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-  el.exportStatus.textContent = `exported: ${filename}`;
-  if (!auto) {
-    log(`Exported run data to ${filename}.`);
-  }
-  trackAction("export", { filename, auto });
-}
-
 function endDay() {
   if (state.runOver) {
     return;
@@ -1082,7 +1184,7 @@ function endDay() {
   state.buyerServedToday = false;
   advanceBuyerQueue();
   generateDayCars();
-  trackAction("end_day", { nextDay: state.day, event: state.dailyEvent.name, buyer: getCurrentBuyer().name });
+  trackAction("end_day", { nextDay: state.day, event: state.dailyEvent.name, buyer: getCurrentBuyer().name }, true);
   recordSeriesPoint();
   renderGraphs();
   renderMarket();
@@ -1111,35 +1213,62 @@ function finishRun() {
   renderTopbar();
   log(`Run finished. Revenue: ${fmt(state.totalRevenue)}. Balance delta: ${fmt(balanceDelta())}.`);
   renderDealHistory();
-  exportRunData(true);
+  schedulePersistence();
 }
 
 // ==== Events ====
-el.nextDayBtn.addEventListener("click", endDay);
+el.nextDayBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "next-day-btn" }, true);
+  endDay();
+});
 el.toGarageFromMarketBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "to-garage-from-market-btn" }, true);
   renderGarage();
   showPanel(el.garagePanel);
 });
 el.toMarketFromGarageBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "to-market-from-garage-btn" }, true);
   renderMarket();
   showPanel(el.marketPanel);
 });
-el.offerLowball.addEventListener("click", () => attemptOffer("lowball"));
-el.offerFair.addEventListener("click", () => attemptOffer("fair"));
-el.offerAsking.addEventListener("click", () => attemptOffer("asking"));
+el.offerLowball.addEventListener("click", () => {
+  trackAction("ui_click", { control: "offer-lowball" }, true);
+  attemptOffer("lowball");
+});
+el.offerFair.addEventListener("click", () => {
+  trackAction("ui_click", { control: "offer-fair" }, true);
+  attemptOffer("fair");
+});
+el.offerAsking.addEventListener("click", () => {
+  trackAction("ui_click", { control: "offer-asking" }, true);
+  attemptOffer("asking");
+});
 el.walkAway.addEventListener("click", () => {
+  trackAction("ui_click", { control: "walk-away" }, true);
   if (state.selectedCar) {
     log(`Walked away from ${state.selectedCar.name}.`);
   }
   state.selectedCar = null;
   showPanel(el.marketPanel);
 });
-el.inspectBtn.addEventListener("click", inspectSelectedCar);
-el.sellQuickBtn.addEventListener("click", () => attemptSale("quick"));
-el.sellFairBtn.addEventListener("click", () => attemptSale("fair"));
-el.sellPremiumBtn.addEventListener("click", () => attemptSale("premium"));
-el.exportDataBtn.addEventListener("click", () => exportRunData(false));
+el.inspectBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "inspect-btn" }, true);
+  inspectSelectedCar();
+});
+el.sellQuickBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "sell-quick-btn" }, true);
+  attemptSale("quick");
+});
+el.sellFairBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "sell-fair-btn" }, true);
+  attemptSale("fair");
+});
+el.sellPremiumBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "sell-premium-btn" }, true);
+  attemptSale("premium");
+});
 el.continueBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "continue-btn" }, true);
   renderGarage();
   showPanel(el.garagePanel);
 });
@@ -1154,6 +1283,7 @@ function init() {
   renderMarket();
   log(`Run started with ${fmt(state.money)}. Buyer now: ${getCurrentBuyer().name}. Event: ${state.dailyEvent.name}.`);
   trackAction("run_start", { money: state.money, buyer: getCurrentBuyer().name, event: state.dailyEvent.name });
+  schedulePersistence();
 }
 
 init();

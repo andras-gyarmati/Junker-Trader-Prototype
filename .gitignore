@@ -1,21 +1,6 @@
 node_modules/
 package.json
 package-lock.json
-/scripts/
+scripts/
 .DS_Store
 run_logs/
-
-# Unity generated
-unity/JunkerTrader3D/Library/
-unity/JunkerTrader3D/Temp/
-unity/JunkerTrader3D/Logs/
-unity/JunkerTrader3D/UserSettings/
-unity/JunkerTrader3D/Obj/
-unity/JunkerTrader3D/Build/
-unity/JunkerTrader3D/Builds/
-unity/JunkerTrader3D/MemoryCaptures/
-unity/JunkerTrader3D/*.csproj
-unity/JunkerTrader3D/*.sln
-unity/JunkerTrader3D/.vs/
-unity/JunkerTrader3D/.idea/
-unity/JunkerTrader3D/Packages/packages-lock.json

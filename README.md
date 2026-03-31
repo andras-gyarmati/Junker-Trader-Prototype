@@ -6,7 +6,7 @@ browse junk car listings -> negotiate -> buy with incomplete info -> inspect hid
 
 ## Run
 
-1. Open `/Users/andrasgyarmati/repos/used-car-trading-proto/index.html` in a browser.
+1. Open `index.html` in a browser.
 2. Play 5-10 in-game days (default run length is 10 days).
 
 No build tools, backend, or persistence.
@@ -36,7 +36,7 @@ No build tools, backend, or persistence.
 
 Main balancing values are at the top of:
 
-- `/Users/andrasgyarmati/repos/used-car-trading-proto/game.js`
+- `game.js`
 
 Look at:
 

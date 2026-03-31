@@ -9,8 +9,9 @@ Crude Unity port of the browser prototype for fast gameplay-loop validation.
 1. Open Unity Hub.
 2. Add project folder: `unity/JunkerTrader3D`.
 3. Open in Unity 6000.4.x.
-4. Open `Assets/Scenes/Main.unity`.
-5. Press Play.
+4. Press Play.
+
+No scene setup required: the game bootstraps itself via `RuntimeInitializeOnLoadMethod` in `Assets/Scripts/JunkerTraderGame.cs`.
 
 ## What is implemented
 - 3D zones (market lot, garage bay, sales desk) built from primitives
@@ -34,13 +35,8 @@ Crude Unity port of the browser prototype for fast gameplay-loop validation.
 ## Intentionally simplified
 - Uses compact IMGUI side HUD for actions
 - No save/load
-- Scene is authored but still primitive-only (no polished prefabs)
+- No authored scenes/prefabs
 - No animation polish / no production architecture
-
-## Script Structure
-- `Assets/Scripts/JunkerTraderGame.cs`: core state + economy/negotiation/repair/sale logic
-- `Assets/Scripts/JunkerTraderGame.Presentation.cs`: world interaction, camera, compact HUD
-- `Assets/Editor/SceneBuilder.cs`: editor utility to regenerate `Main.unity` if needed (`Tools/Junker Trader/Create Main Scene`)
 
 ## Fast balancing knobs
 Top constants in `Assets/Scripts/JunkerTraderGame.cs`:

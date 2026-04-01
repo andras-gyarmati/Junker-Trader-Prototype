@@ -16,7 +16,7 @@ function inspectSelectedCar() {
     return;
   }
 
-  const cost = Math.round(CONFIG.inspectCost * state.dailyEvent.inspectModifier);
+  const cost = Math.round(CONFIG.inspectCost * state.dailyEvent.inspectModifier * state.cityModifier.repairMult);
   if (state.money < cost) {
     log(`Cannot inspect: need ${fmt(cost)}.`);
     return;
@@ -29,6 +29,7 @@ function inspectSelectedCar() {
   car.totalInvested += cost;
   car.actionHistory.push({ kind: "inspect", day: state.day, amount: cost });
   car.inspected = true;
+  car.reliability = clamp(car.reliability + 0.02, 0.12, 0.95);
   log(`Inspection complete on ${car.name}. Hidden faults revealed.`);
   trackAction("inspect", { carId: car.id, name: car.name, cost }, true);
   recordSeriesPoint();
@@ -51,7 +52,7 @@ function repairSelectedCarFault(faultId) {
     return;
   }
 
-  const cost = Math.round(info.repairCost * state.dailyEvent.inspectModifier);
+  const cost = Math.round(info.repairCost * state.dailyEvent.inspectModifier * state.cityModifier.repairMult);
   if (state.money < cost) {
     log(`Cannot repair ${info.label}: need ${fmt(cost)}.`);
     return;
@@ -64,6 +65,9 @@ function repairSelectedCarFault(faultId) {
   car.totalInvested += cost;
   car.actionHistory.push({ kind: "repair", day: state.day, amount: cost, faultId });
   car.repairedFaults.add(faultId);
+  car.brokenDown = false;
+  car.durability = clamp(car.durability + 7, 0, 100);
+  car.reliability = clamp(car.reliability + 0.04, 0.12, 0.96);
   log(`Repaired ${info.label} on ${car.name} for ${fmt(cost)}.`);
   trackAction("repair", { carId: car.id, name: car.name, faultId, cost }, true);
   recordSeriesPoint();
@@ -94,6 +98,7 @@ function cleanSelectedCarCosmetic() {
   car.cleanedOnce = true;
   car.actionHistory.push({ kind: "clean", day: state.day, amount: CONFIG.cosmeticCleanCost });
   car.cosmeticCondition = clamp(car.cosmeticCondition + 10, 0, 100);
+  car.reliability = clamp(car.reliability + 0.01, 0.12, 0.97);
   log(`Quick cleaning done on ${car.name} for ${fmt(CONFIG.cosmeticCleanCost)}.`);
   trackAction("clean", { carId: car.id, name: car.name, cost: CONFIG.cosmeticCleanCost }, true);
   recordSeriesPoint();

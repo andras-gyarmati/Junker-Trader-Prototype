@@ -65,7 +65,8 @@ function schedulePersistence() {
 }
 
 function log(msg) {
-  state.logLines.unshift(`[Day ${state.day}] ${msg}`);
+  const cityTag = state.currentCity ? state.currentCity.name : "N/A";
+  state.logLines.unshift(`[Step ${state.day} | ${cityTag}] ${msg}`);
   el.log.textContent = state.logLines.join("\n");
   trackAction("log", { msg });
 }
@@ -104,8 +105,12 @@ function buildExportData() {
     meta: {
       exportedAt: new Date().toISOString(),
       runStartedAt: state.runStartedAt,
-      day: state.day,
-      runOver: state.runOver
+      step: state.day,
+      runOver: state.runOver,
+      runStatus: state.runStatus,
+      currentCity: state.currentCity ? state.currentCity.name : null,
+      citiesReached: state.citiesReached,
+      maxCities: CONFIG.maxCities
     },
     summary: {
       startingMoney: CONFIG.startingMoney,
@@ -114,7 +119,8 @@ function buildExportData() {
       spent: state.totalSpent,
       balanceDelta: balanceDelta(),
       inventoryCount: state.inventory.length,
-      persistenceMode: state.persistenceMode
+      persistenceMode: state.persistenceMode,
+      routeHistory: state.routeHistory
     },
     series: state.series,
     completedDeals: state.completedDeals,
@@ -125,6 +131,10 @@ function buildExportData() {
       purchaseDay: car.purchaseDay,
       boughtFor: car.boughtFor,
       totalInvested: car.totalInvested,
+      durability: car.durability,
+      reliability: car.reliability,
+      fuelCostModifier: car.fuelCostModifier,
+      brokenDown: car.brokenDown,
       saleAttempts: car.saleAttempts,
       inspected: car.inspected,
       visibleFaults: car.visibleFaults,

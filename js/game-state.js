@@ -1,6 +1,30 @@
 function showPanel(panel) {
-  [el.marketPanel, el.negotiationPanel, el.garagePanel, el.salePanel].forEach((p) => p.classList.remove("active"));
+  [el.marketPanel, el.travelPanel, el.eventPanel, el.negotiationPanel, el.garagePanel, el.salePanel].forEach((p) => p.classList.remove("active"));
   panel.classList.add("active");
+}
+
+function getCurrentCar() {
+  if (!state.currentCarId) {
+    return null;
+  }
+  return state.inventory.find((car) => car.id === state.currentCarId) || null;
+}
+
+function setCurrentCar(carId) {
+  state.currentCarId = carId;
+  trackAction("set_current_car", { carId }, true);
+}
+
+function hasUsableRoadCar() {
+  const car = getCurrentCar();
+  if (!car) {
+    return false;
+  }
+  return !car.brokenDown && car.durability > 0;
+}
+
+function canAffordAnyCar() {
+  return state.dayCars.some((car) => car.askingPrice <= state.money);
 }
 
 function getCurrentBuyer() {
@@ -51,6 +75,9 @@ function formatWorkLogEntry(w) {
   if (w.kind === "inspect") return `${dayLabel}:inspect:-${fmt(w.amount)}`;
   if (w.kind === "repair") return `${dayLabel}:repair:${w.faultId}:-${fmt(w.amount)}`;
   if (w.kind === "clean") return `${dayLabel}:clean:-${fmt(w.amount)}`;
+  if (w.kind === "travel") return `${dayLabel}:travel:${w.to}:${w.km}km:-${fmt(w.amount)}`;
+  if (w.kind === "roadside_repair") return `${dayLabel}:roadRepair:${w.faultId}:-${fmt(w.amount)}`;
+  if (w.kind === "emergency_repair") return `${dayLabel}:emergencyRepair:-${fmt(w.amount)}`;
   if (w.kind === "sell_attempt") return `${dayLabel}:sellAttempt:${w.mode}:-${fmt(w.amount)}`;
   if (w.kind === "sell_success") return `${dayLabel}:sell:+${fmt(w.amount)}`;
   if (w.kind === "junkyard_sale") return `${dayLabel}:junkyard:+${fmt(w.amount)}`;

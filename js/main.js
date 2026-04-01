@@ -2,9 +2,8 @@ function endDay() {
   if (state.runOver) {
     return;
   }
-
-  if (state.day >= CONFIG.maxDays) {
-    finishRun();
+  if (!canContinueRun()) {
+    collapseRun("No usable car and no affordable path before starting a new day.");
     return;
   }
 
@@ -14,36 +13,20 @@ function endDay() {
     advanceBuyerQueue();
   }
   generateDayCars();
-  trackAction("end_day", { nextDay: state.day, event: state.dailyEvent.name, buyer: getCurrentBuyer().name }, true);
+  trackAction("end_day", {
+    nextDay: state.day,
+    city: state.currentCity ? state.currentCity.name : "N/A",
+    event: state.dailyEvent.name,
+    buyer: getCurrentBuyer().name
+  }, true);
   recordSeriesPoint();
   renderGraphs();
   renderMarket();
   showPanel(el.marketPanel);
-  log(`New day. ${state.dayCars.length} junkers listed. Buyer now: ${getCurrentBuyer().name}. Event: ${state.dailyEvent.name}.`);
-}
-
-function finishRun() {
-  state.runOver = true;
-  showPanel(el.marketPanel);
-  el.marketCars.innerHTML = `
-    <div class="card">
-      <strong>Run Over</strong><br>
-      Days played: ${CONFIG.maxDays}<br>
-      Final money: ${fmt(state.money)}<br>
-      Total spent: ${fmt(state.totalSpent)}<br>
-      Total revenue: ${fmt(state.totalRevenue)}<br>
-      Balance delta: ${fmt(balanceDelta())}<br>
-      Unsold inventory: ${state.inventory.length}
-    </div>
-    <button id="restart-btn">Restart Run</button>
-  `;
-
-  const restart = document.getElementById("restart-btn");
-  restart.addEventListener("click", () => window.location.reload());
-  renderTopbar();
-  log(`Run finished. Revenue: ${fmt(state.totalRevenue)}. Balance delta: ${fmt(balanceDelta())}.`);
-  renderDealHistory();
-  schedulePersistence();
+  log(`Spent a day in ${state.currentCity.name}. ${state.dayCars.length} junkers listed. Buyer now: ${getCurrentBuyer().name}. Event: ${state.dailyEvent.name}.`);
+  if (!canContinueRun()) {
+    collapseRun("No usable car and no affordable path after day rollover.");
+  }
 }
 
 // ==== Events ====
@@ -60,6 +43,73 @@ el.toMarketFromGarageBtn.addEventListener("click", () => {
   trackAction("ui_click", { control: "to-market-from-garage-btn" }, true);
   renderMarket();
   showPanel(el.marketPanel);
+});
+el.toTravelBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "to-travel-btn" }, true);
+  renderTravelPanel();
+  showPanel(el.travelPanel);
+});
+el.toTravelFromGarageBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "to-travel-from-garage-btn" }, true);
+  renderTravelPanel();
+  showPanel(el.travelPanel);
+});
+el.travelBackMarketBtn.addEventListener("click", () => {
+  trackAction("ui_click", { control: "travel-back-market-btn" }, true);
+  renderMarket();
+  showPanel(el.marketPanel);
+});
+el.travelChoices.addEventListener("click", (e) => {
+  const target = e.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const action = target.dataset.action;
+  const actionCarId = target.dataset.carId;
+  if (action === "set-road-car" && actionCarId) {
+    trackAction("ui_click", { control: "travel-set-road-car", carId: actionCarId }, true);
+    setCurrentCar(actionCarId);
+    const car = state.inventory.find((c) => c.id === actionCarId);
+    if (car) {
+      log(`${car.name} selected as travel car.`);
+    }
+    renderTravelPanel();
+    return;
+  }
+  if (action === "travel-dispose-junkyard" && actionCarId) {
+    trackAction("ui_click", { control: "travel-dispose-junkyard", carId: actionCarId }, true);
+    disposeNonTravelCar(actionCarId, "junkyard");
+    renderTravelPanel();
+    return;
+  }
+  if (action === "travel-dispose-abandon" && actionCarId) {
+    trackAction("ui_click", { control: "travel-dispose-abandon", carId: actionCarId }, true);
+    disposeNonTravelCar(actionCarId, "abandon");
+    renderTravelPanel();
+    return;
+  }
+  const choiceIndex = target.dataset.choiceIndex;
+  if (choiceIndex != null) {
+    trackAction("ui_click", { control: "travel-choice", choiceIndex: Number(choiceIndex) }, true);
+    resolveTravelToChoice(Number(choiceIndex));
+    return;
+  }
+  if (action === "abandon-run") {
+    trackAction("ui_click", { control: "abandon-run" }, true);
+    abandonRun();
+  }
+});
+el.eventActions.addEventListener("click", (e) => {
+  const target = e.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const optionId = target.dataset.eventOption;
+  if (!optionId) {
+    return;
+  }
+  trackAction("ui_click", { control: "road-event-option", optionId }, true);
+  resolveRoadEventOption(optionId);
 });
 el.offerLowball.addEventListener("click", () => {
   trackAction("ui_click", { control: "offer-lowball" }, true);
@@ -93,6 +143,15 @@ el.walkAway.addEventListener("click", () => {
 el.inspectBtn.addEventListener("click", () => {
   trackAction("ui_click", { control: "inspect-btn" }, true);
   inspectSelectedCar();
+});
+el.setCurrentCarBtn.addEventListener("click", () => {
+  const car = getSelectedInventoryCar();
+  if (!car) {
+    return;
+  }
+  setCurrentCar(car.id);
+  log(`${car.name} set as current road car.`);
+  renderGarage();
 });
 el.sellQuickBtn.addEventListener("click", () => {
   trackAction("ui_click", { control: "sell-quick-btn" }, true);
@@ -149,14 +208,24 @@ function init() {
   el.acceptSaleBtn.style.display = "none";
   el.rejectSaleBtn.style.display = "none";
   el.continueBtn.disabled = false;
+
   ensureBuyerQueue();
+  startRunInCity();
   generateDayCars();
+
   recordSeriesPoint();
   renderGraphs();
   renderDealHistory();
   renderMarket();
-  log(`Run started with ${fmt(state.money)}. Buyer now: ${getCurrentBuyer().name}. Event: ${state.dailyEvent.name}.`);
-  trackAction("run_start", { money: state.money, buyer: getCurrentBuyer().name, event: state.dailyEvent.name });
+  showPanel(el.marketPanel);
+
+  log(`Run started in ${state.currentCity.name} with ${fmt(state.money)}. Road-trip target: reach as many cities as possible.`);
+  trackAction("run_start", {
+    money: state.money,
+    city: state.currentCity.name,
+    buyer: getCurrentBuyer().name,
+    event: state.dailyEvent.name
+  });
   schedulePersistence();
 }
 

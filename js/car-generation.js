@@ -55,7 +55,11 @@ function generateCar() {
     sellerPersonality,
     lastRejectedOffer: 0,
     reservePrice,
-    offended: 0
+    offended: 0,
+    durability: randInt(45, 95),
+    reliability: clamp(0.42 + Math.random() * 0.44 - riskScoreModifier * 0.12, 0.18, 0.92),
+    fuelCostModifier: clamp(0.88 + Math.random() * 0.42 + riskScoreModifier * 0.08, 0.78, 1.45),
+    brokenDown: false
   };
 }
 
@@ -110,7 +114,18 @@ function generateDayCars() {
       car.askingPrice = Math.max(450, car.askingPrice - 300);
     }
 
-    car.askingPrice = Math.round(car.askingPrice * state.dailyEvent.askModifier);
+    car.askingPrice = Math.round(car.askingPrice * state.dailyEvent.askModifier * state.cityModifier.carPriceMult);
+    if (state.cityModifier.qualityShift < 0) {
+      car.durability = clamp(car.durability + Math.round(state.cityModifier.qualityShift * 30), 20, 100);
+      car.reliability = clamp(car.reliability + state.cityModifier.qualityShift * 0.25, 0.12, 0.92);
+    } else {
+      car.durability = clamp(car.durability + Math.round(state.cityModifier.qualityShift * 20), 25, 100);
+      car.reliability = clamp(car.reliability + state.cityModifier.qualityShift * 0.2, 0.12, 0.95);
+    }
+    if (Math.random() < state.cityModifier.shadySeller) {
+      car.hiddenFaults.push(pick(Object.keys(FAULTS)));
+      car.hiddenFaults = [...new Set(car.hiddenFaults)];
+    }
     return car;
   });
 }

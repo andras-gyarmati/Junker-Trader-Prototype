@@ -1,57 +1,85 @@
-# Used-Car Trading Prototype
+# Junker Road Trip Prototype
 
-Crude browser prototype for validating this loop:
+Crude browser prototype for validating this run loop:
 
-browse junk car listings -> negotiate -> buy with incomplete info -> inspect hidden faults -> repair under budget -> sell to targeted buyer -> repeat.
+arrive at city -> browse junkers -> negotiate/buy -> inspect/repair -> choose next city -> travel -> resolve wear/breakdown/event -> repeat.
 
 ## Run
 
 1. Open `index.html` in a browser.
-2. Play 5-10 in-game days (default run length is 10 days).
+2. Start in a random city and try to reach as many cities as possible before the run collapses.
 
-No build tools, backend, or persistence.
+No build tools, backend, or external services.
 
-## What Changed For Strategy
+## New Run Structure
 
-- No direct market value in listings.
-- Listings show a `Notebook estimate` learned only from your own past sale outcomes.
-- Buyer queue preview shows current + next buyers, so inventory planning matters.
-- Daily buyer demand varies (1-4 buyers/day with event modifiers), so you can sell multiple cars in one day.
-- You can buy and hold multiple cars in inventory.
-- Selling has pricing modes (`quick`, `fair`, `premium`) with buyer-dependent outcomes.
-- Added `Sell To Junkyard` liquidation path for stuck inventory.
-- Daily event is shown clearly in top bar and buyer forecast card.
-- Added run graphs for money, total spent, and total revenue.
-- Added completed deal stats per car (buy day, sell day, invested, sale price, deal P/L, ROI).
-- Cars now show internal work logs (inspection/repair/clean/sell attempts).
-- Fault repair "value gain if fixed" is now learned from sold-car outcomes (blended with fallback defaults).
-- Repair rows now show projected fair-mode deal P/L after each repair (quick planning aid).
-- Run data is continuously persisted after each user action.
-- Data is written automatically to origin-private files (OPFS) with no picker:
-  `junker-trader-log-<timestamp>.json` and `junker-trader-log-<timestamp>-actions.ndjson`.
-- UI shows clickable "Log Files" links for the latest JSON and NDJSON snapshots.
-- Fallback is `localStorage` key `junker_trader_latest_run`.
+- You now play a **road-trip run**, not a pure day-based flipping sim.
+- Core tracked state:
+  - current city
+  - cities reached
+  - current road car
+  - cash/spent/revenue
+  - route history
+- Run ends when:
+  - you hit the city cap (`CONFIG.maxCities`),
+  - you collapse (no usable/affordable recovery path),
+  - or you abandon.
+
+## Travel System
+
+- Use **Travel Planner** to pick 2-3 next-city options.
+- You can only travel with **one** car. Before driving, choose a travel car and sell/abandon all other inventory cars.
+- Each option has:
+  - distance
+  - road risk
+  - local city modifiers (car prices, repair costs, buyer richness)
+- Travel applies:
+  - fuel cost
+  - durability wear
+  - chance of new/revealed faults
+  - breakdown chance
+  - random road events
+
+## Breakdown / Road Events
+
+Breakdown events give high-pressure decisions:
+
+- emergency repair
+- limp attempt
+- roadside sale
+- abandon + taxi
+
+Other road events include flat tire, overheating, cheap mechanic, tow scam, fuel spike, and hidden fault reveal.
+
+## Existing Systems Kept (Reframed)
+
+- Car generation with visible + hidden faults
+- Negotiation and seller personalities
+- Inspection and repair
+- Buyer-type selling loop
+- Economy tracking and graphs
+- Action logging and run export files
+
+Repairs now also support **travel survival** (durability/reliability), not just sale outcomes.
 
 ## Tweak Values
 
-Main balancing values are at the top of:
+Main balancing knobs are in:
 
-- `game.js`
+- `js/config.js`
 
-Look at:
+Focus on:
 
-- `CONFIG` (economy, day count, pricing multipliers, buyer preview, graph pacing)
-- `FAULTS` (repair cost, value hit, sale penalty)
-- `BUYER_TYPES` (buyer behavior and profile)
-- `SELLER_PERSONALITIES`
-- `CAR_NAMES`
+- `CONFIG.maxCities`
+- `CONFIG.travel.*`
+- `CITY_POOL` city modifiers
+- `FAULTS`
+- `CONFIG.negotiation`
+- `CONFIG.selling`
 
 ## Simplifications
 
-- One buyer interaction per day (sell attempt consumes that day's buyer).
-- Sale chance is a simple probabilistic model, not a full listing simulation.
-- Notebook estimate is a lightweight similarity range model from prior sales and narrows over time.
-- Hidden faults are only revealed after inspection.
-- `Mechanic Strike` blocks engine/transmission/tire repairs for that day.
-- `Revenue` is sell income only; cash impact is visible via `Money` and `Balance Delta`.
-- No persistence, no backend, no advanced UI.
+- City graph is lightweight random choices, not a real map.
+- Travel/breakdown is intentionally gamey (not realistic vehicle simulation).
+- Buyers are still queue-based and local.
+- No save/load UI, no backend, no polish pass.

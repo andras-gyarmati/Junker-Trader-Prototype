@@ -156,7 +156,8 @@ function buyCar(car, price) {
     actionHistory: [{ kind: "buy", day: state.day, amount: price }],
     inspected: false,
     repairedFaults: new Set(),
-    purchaseDay: state.day
+    purchaseDay: state.day,
+    brokenDown: false
   };
 
   state.money -= price;
@@ -164,9 +165,12 @@ function buyCar(car, price) {
   state.totalProfit = state.totalRevenue;
   state.inventory.push(ownedCar);
   state.selectedInventoryId = ownedCar.id;
+  if (!state.currentCarId) {
+    state.currentCarId = ownedCar.id;
+  }
   state.dayCars = state.dayCars.filter((c) => c.id !== car.id);
 
-  log(`Bought ${car.name} for ${fmt(price)}. Inventory now ${state.inventory.length}.`);
+  log(`Bought ${car.name} for ${fmt(price)}. Durability ${ownedCar.durability}/100, reliability ${(ownedCar.reliability * 100).toFixed(0)}%.`);
   trackAction("buy", { carId: car.id, name: car.name, price }, true);
   recordSeriesPoint();
   renderGraphs();

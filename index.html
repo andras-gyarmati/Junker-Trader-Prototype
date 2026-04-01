@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Junker Trader Prototype</title>
+  <title>Junker Road Trip Prototype</title>
   <style>
     body { font-family: monospace; margin: 10px; background: #f4f4f4; }
     h1, h2, h3 { margin: 0 0 8px 0; }
@@ -24,9 +24,11 @@
   </style>
 </head>
 <body>
-  <h1>Junker Trader Prototype</h1>
+  <h1>Junker Road Trip Prototype</h1>
 
   <div class="topbar" id="topbar"></div>
+  <div id="run-status-panel" class="card"></div>
+  <div id="current-car-panel" class="card"></div>
   <div id="buyer-forecast" class="card"></div>
 
   <section id="market-panel" class="panel active">
@@ -34,8 +36,21 @@
     <div class="market-divider"><strong>Listings</strong> (seller info is on each card)</div>
     <div id="market-cars" class="cards-grid"></div>
     <button id="to-garage-from-market-btn">Go To Garage</button>
-    <button id="next-day-btn">End Day</button>
+    <button id="to-travel-btn">Travel Planner</button>
+    <button id="next-day-btn">Wait 1 Day</button>
     <p class="small">No direct market estimate shown. Use your own sale history notebook.</p>
+  </section>
+
+  <section id="travel-panel" class="panel">
+    <h2>Travel Planner</h2>
+    <div id="travel-choices" class="cards-grid"></div>
+    <button id="travel-back-market-btn">Back To City Market</button>
+  </section>
+
+  <section id="event-panel" class="panel">
+    <h2>Road Event</h2>
+    <div id="event-content"></div>
+    <div id="event-actions"></div>
   </section>
 
   <section id="negotiation-panel" class="panel">
@@ -69,6 +84,8 @@
     <button id="sell-fair-btn">Sell Fair</button>
     <button id="sell-premium-btn">Sell Premium</button>
     <button id="sell-junkyard-btn">Sell To Junkyard</button>
+    <button id="set-current-car-btn">Set As Road Car</button>
+    <button id="to-travel-from-garage-btn">Travel Planner</button>
     <button id="to-market-from-garage-btn">Back To Market</button>
   </section>
 
@@ -129,6 +146,7 @@
   <script src="js/negotiation.js"></script>
   <script src="js/inventory.js"></script>
   <script src="js/selling.js"></script>
+  <script src="js/travel.js"></script>
   <script src="js/rendering.js"></script>
   <script src="js/main.js"></script>
 </body>

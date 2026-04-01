@@ -1,6 +1,30 @@
 function showPanel(panel) {
-  [el.marketPanel, el.negotiationPanel, el.garagePanel, el.salePanel].forEach((p) => p.classList.remove("active"));
+  [el.marketPanel, el.travelPanel, el.eventPanel, el.negotiationPanel, el.garagePanel, el.salePanel].forEach((p) => p.classList.remove("active"));
   panel.classList.add("active");
+}
+
+function getCurrentCar() {
+  if (!state.currentCarId) {
+    return null;
+  }
+  return state.inventory.find((car) => car.id === state.currentCarId) || null;
+}
+
+function setCurrentCar(carId) {
+  state.currentCarId = carId;
+  trackAction("set_current_car", { carId }, true);
+}
+
+function hasUsableRoadCar() {
+  const car = getCurrentCar();
+  if (!car) {
+    return false;
+  }
+  return !car.brokenDown && car.durability > 0;
+}
+
+function canAffordAnyCar() {
+  return state.dayCars.some((car) => car.askingPrice <= state.money);
 }
 
 function getCurrentBuyer() {
@@ -51,11 +75,42 @@ function formatWorkLogEntry(w) {
   if (w.kind === "inspect") return `${dayLabel}:inspect:-${fmt(w.amount)}`;
   if (w.kind === "repair") return `${dayLabel}:repair:${w.faultId}:-${fmt(w.amount)}`;
   if (w.kind === "clean") return `${dayLabel}:clean:-${fmt(w.amount)}`;
+  if (w.kind === "travel") return `${dayLabel}:travel:${w.to}:${w.km}km:-${fmt(w.amount)}`;
+  if (w.kind === "roadside_repair") return `${dayLabel}:roadRepair:${w.faultId}:-${fmt(w.amount)}`;
+  if (w.kind === "emergency_repair") return `${dayLabel}:emergencyRepair:-${fmt(w.amount)}`;
   if (w.kind === "sell_attempt") return `${dayLabel}:sellAttempt:${w.mode}:-${fmt(w.amount)}`;
   if (w.kind === "sell_success") return `${dayLabel}:sell:+${fmt(w.amount)}`;
   if (w.kind === "junkyard_sale") return `${dayLabel}:junkyard:+${fmt(w.amount)}`;
   if (w.kind === "sell_fail") return `${dayLabel}:sell:failed`;
   return `${dayLabel}:${w.kind}`;
+}
+
+function formatWorkLogEntryHuman(w) {
+  if (w.kind === "buy") return `Bought for ${fmt(w.amount)}`;
+  if (w.kind === "inspect") return `Inspection ${fmt(w.amount)}`;
+  if (w.kind === "repair") return `Repaired ${FAULTS[w.faultId]?.label || w.faultId} for ${fmt(w.amount)}`;
+  if (w.kind === "clean") return `Cleaned for ${fmt(w.amount)}`;
+  if (w.kind === "travel") return `Traveled to ${w.to} (${w.km}km, fuel ${fmt(w.amount)})`;
+  if (w.kind === "roadside_repair") return `Roadside fix ${FAULTS[w.faultId]?.label || w.faultId} for ${fmt(w.amount)}`;
+  if (w.kind === "emergency_repair") return `Emergency repair ${fmt(w.amount)}`;
+  if (w.kind === "sell_attempt") return `Sale attempt (${w.mode}) fee ${fmt(w.amount)}`;
+  if (w.kind === "sell_success") return `Sold for ${fmt(w.amount)}`;
+  if (w.kind === "junkyard_sale") return `Junkyard sale ${fmt(w.amount)}`;
+  if (w.kind === "sell_fail") return "Sale attempt failed";
+  if (w.kind === "abandon") return "Car abandoned";
+  return w.kind;
+}
+
+function summarizeWorkLog(entries) {
+  if (!entries || entries.length === 0) {
+    return "none";
+  }
+  let lastDay = null;
+  return entries.map((w) => {
+    const prefix = w.day !== lastDay ? `d${w.day}: ` : "";
+    lastDay = w.day;
+    return `${prefix}${formatWorkLogEntryHuman(w)}`;
+  }).join(" | ");
 }
 
 function estimateRepairValueGain(faultId) {

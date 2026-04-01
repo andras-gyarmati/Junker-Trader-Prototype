@@ -35,11 +35,13 @@ function updateOfferSliderLabel() {
   const car = state.selectedCar;
   if (!car) {
     el.offerSliderLabel.textContent = "No car selected.";
+    el.offerCustom.textContent = "Submit Custom Offer";
     return;
   }
   const offer = getOfferFromSlider();
   const pct = Number(el.offerSlider.value);
   el.offerSliderLabel.textContent = `Offer: ${fmt(offer)} (${pct}% of asking ${fmt(car.askingPrice)})`;
+  el.offerCustom.textContent = `Submit Custom Offer (${fmt(offer)}, no fee)`;
 }
 
 function updateNegotiationButtons() {
@@ -52,9 +54,9 @@ function updateNegotiationButtons() {
   }
   const lowball = Math.round(car.askingPrice * CONFIG.negotiation.lowballRatio);
   const fair = Math.round(car.askingPrice * CONFIG.negotiation.fairRatio);
-  el.offerLowball.textContent = `Lowball (${fmt(lowball)})`;
-  el.offerFair.textContent = `Fair Offer (${fmt(fair)})`;
-  el.offerAsking.textContent = `Pay Asking (${fmt(car.askingPrice)})`;
+  el.offerLowball.textContent = `Lowball (${fmt(lowball)}, no fee)`;
+  el.offerFair.textContent = `Fair Offer (${fmt(fair)}, no fee)`;
+  el.offerAsking.textContent = `Pay Asking (${fmt(car.askingPrice)}, no fee)`;
 }
 
 function attemptOffer(type, customOffer = null) {
@@ -156,7 +158,8 @@ function buyCar(car, price) {
     actionHistory: [{ kind: "buy", day: state.day, amount: price }],
     inspected: false,
     repairedFaults: new Set(),
-    purchaseDay: state.day
+    purchaseDay: state.day,
+    brokenDown: false
   };
 
   state.money -= price;
@@ -164,9 +167,12 @@ function buyCar(car, price) {
   state.totalProfit = state.totalRevenue;
   state.inventory.push(ownedCar);
   state.selectedInventoryId = ownedCar.id;
+  if (!state.currentCarId) {
+    state.currentCarId = ownedCar.id;
+  }
   state.dayCars = state.dayCars.filter((c) => c.id !== car.id);
 
-  log(`Bought ${car.name} for ${fmt(price)}. Inventory now ${state.inventory.length}.`);
+  log(`Bought ${car.name} for ${fmt(price)}. Durability ${ownedCar.durability}/100, reliability ${(ownedCar.reliability * 100).toFixed(0)}%.`);
   trackAction("buy", { carId: car.id, name: car.name, price }, true);
   recordSeriesPoint();
   renderGraphs();

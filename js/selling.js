@@ -56,12 +56,35 @@ function updateSellSliderLabel() {
   const buyer = getCurrentBuyer();
   if (!car || !buyer) {
     el.sellSliderLabel.textContent = "No car selected.";
+    el.sellCustomBtn.textContent = "Offer Custom Price";
     return;
   }
-  const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier;
+  const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier * state.cityModifier.buyerRichness;
   const multiplier = getSellMultiplierFromSlider();
   const listPrice = Math.round(trueValue * multiplier);
   el.sellSliderLabel.textContent = `List: ${fmt(listPrice)} (${Math.round(multiplier * 100)}% of internal value ${fmt(trueValue)})`;
+  el.sellCustomBtn.textContent = `Offer Custom (${fmt(listPrice)}, fee ${fmt(CONFIG.sellAttemptFee)})`;
+}
+
+function updateSellModeButtons() {
+  const car = getSelectedInventoryCar();
+  if (!car) {
+    el.sellQuickBtn.textContent = "Sell Quick";
+    el.sellFairBtn.textContent = "Sell Fair";
+    el.sellPremiumBtn.textContent = "Sell Premium";
+    el.sellJunkyardBtn.textContent = "Sell To Junkyard";
+    return;
+  }
+
+  const base = calcTrueValue(car) * state.dailyEvent.saleModifier * state.cityModifier.buyerRichness;
+  const quickPrice = Math.round(base * CONFIG.selling.quickMultiplier);
+  const fairPrice = Math.round(base * CONFIG.selling.fairMultiplier);
+  const premiumPrice = Math.round(base * CONFIG.selling.premiumMultiplier);
+
+  el.sellQuickBtn.textContent = `Sell Quick (${fmt(quickPrice)}, fee ${fmt(CONFIG.sellAttemptFee)})`;
+  el.sellFairBtn.textContent = `Sell Fair (${fmt(fairPrice)}, fee ${fmt(CONFIG.sellAttemptFee)})`;
+  el.sellPremiumBtn.textContent = `Sell Premium (${fmt(premiumPrice)}, fee ${fmt(CONFIG.sellAttemptFee)})`;
+  el.sellJunkyardBtn.textContent = `Sell To Junkyard (+${fmt(calcJunkyardPrice(car))}, no fee)`;
 }
 
 function estimateExpectedSalePrice(car, buyer, priceMode = "fair", customMultiplier = null) {
@@ -69,7 +92,7 @@ function estimateExpectedSalePrice(car, buyer, priceMode = "fair", customMultipl
     return 0;
   }
   const multiplier = customMultiplier ?? salePriceMultiplierForMode(priceMode);
-  const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier;
+  const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier * state.cityModifier.buyerRichness;
   const listPrice = Math.round(trueValue * multiplier);
   const unresolved = unresolvedFaults(car);
   const unresolvedPenalty = unresolved.reduce((sum, f) => sum + FAULTS[f].salePenalty, 0) * buyer.flawSensitivity;
@@ -102,7 +125,7 @@ function projectedDealProfitAfterRepair(car, faultId) {
   };
   simulated.repairedFaults.add(faultId);
 
-  const repairCost = Math.round(FAULTS[faultId].repairCost * state.dailyEvent.inspectModifier);
+  const repairCost = Math.round(FAULTS[faultId].repairCost * state.dailyEvent.inspectModifier * state.cityModifier.repairMult);
   const expectedSale = estimateExpectedSalePrice(simulated, buyer, "fair");
   const projectedProfit = expectedSale - (car.totalInvested + repairCost + CONFIG.sellAttemptFee);
   return {
@@ -160,13 +183,21 @@ function attemptSale(priceMode, customMultiplier = null) {
     log("No buyers left today. End day for the next market batch.");
     return;
   }
+  if (state.money < CONFIG.sellAttemptFee) {
+    log(`Cannot list for sale: need ${fmt(CONFIG.sellAttemptFee)} listing fee.`);
+    return;
+  }
 
   const multiplier = customMultiplier ?? salePriceMultiplierForMode(priceMode);
 
-  const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier;
+  const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier * state.cityModifier.buyerRichness;
   let listPrice = Math.round(trueValue * multiplier);
 
   const unresolved = unresolvedFaults(car);
+  if (car.brokenDown) {
+    log(`${car.name} is broken down. Repair first or junk/swap cars.`);
+    return;
+  }
   const unresolvedPenalty = unresolved.reduce((sum, f) => sum + FAULTS[f].salePenalty, 0) * buyer.flawSensitivity;
   const cosmeticPenalty = ((100 - car.cosmeticCondition) / 100) * buyer.cosmeticNeed;
   const pricePressure = listPrice / Math.max(1, trueValue);
@@ -389,6 +420,9 @@ function resolvePendingSale(accept) {
   if (state.selectedInventoryId === car.id) {
     state.selectedInventoryId = state.inventory[0]?.id || null;
   }
+  if (state.currentCarId === car.id) {
+    state.currentCarId = null;
+  }
   trackAction("sell_success", {
     carId: car.id,
     name: car.name,
@@ -448,6 +482,9 @@ function sellSelectedToJunkyard() {
   state.inventory = state.inventory.filter((c) => c.id !== car.id);
   if (state.selectedInventoryId === car.id) {
     state.selectedInventoryId = state.inventory[0]?.id || null;
+  }
+  if (state.currentCarId === car.id) {
+    state.currentCarId = null;
   }
   log(`Sold ${car.name} to junkyard for ${fmt(payout)} (${dealProfit >= 0 ? "+" : ""}${fmt(dealProfit)}).`);
   trackAction("junkyard_sale", { carId: car.id, name: car.name, payout, invested: car.totalInvested, dealProfit }, true);

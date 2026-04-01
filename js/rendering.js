@@ -103,7 +103,7 @@ function renderMarket() {
     `;
 
     const btn = document.createElement("button");
-    btn.textContent = "Negotiate";
+    btn.textContent = "Negotiate (no fee)";
     btn.addEventListener("click", () => {
       trackAction("ui_click", { control: "negotiate-btn", carId: car.id, name: car.name }, true);
       startNegotiation(car.id);
@@ -165,6 +165,7 @@ function renderGarage() {
     el.garageContent.innerHTML = `<div class="card">No car selected. City: ${cityName}. Current buyer: ${buyer ? buyer.name : "N/A"}.</div>`;
     el.repairActions.innerHTML = "";
     el.inspectBtn.disabled = true;
+    el.inspectBtn.textContent = "Inspect";
     el.sellQuickBtn.disabled = true;
     el.sellFairBtn.disabled = true;
     el.sellPremiumBtn.disabled = true;
@@ -172,6 +173,7 @@ function renderGarage() {
     el.sellJunkyardBtn.disabled = true;
     el.setCurrentCarBtn.disabled = true;
     el.sellSliderLabel.textContent = "No car selected.";
+    updateSellModeButtons();
     return;
   }
 
@@ -192,7 +194,7 @@ function renderGarage() {
       Notebook basis: ${notebook ? `${notebook.matchedSamples} strong matches / ${notebook.sampleCount} total sales` : "sell more cars to train notebook"}<br>
       Invested so far: ${fmt(car.totalInvested)}<br>
       Cleaning status: ${car.cleanedOnce ? "already used" : "available"}<br>
-      Work log: ${car.actionHistory.length ? car.actionHistory.map((w) => formatWorkLogEntry(w)).join(" | ") : "none"}<br>
+      Work log: ${summarizeWorkLog(car.actionHistory)}<br>
       Today buyer: ${buyer ? buyer.name : "N/A"} (${buyer ? buyer.profile : "-"})
     </div>
   `;
@@ -220,7 +222,8 @@ function renderGarage() {
       btn.disabled = true;
       btn.textContent = "Blocked By Mechanic Strike";
     } else {
-      btn.textContent = `Repair ${fault.label}`;
+      const repairCost = Math.round(fault.repairCost * state.dailyEvent.inspectModifier * state.cityModifier.repairMult);
+      btn.textContent = `Repair ${fault.label} (-${fmt(repairCost)})`;
       btn.addEventListener("click", () => {
         trackAction("ui_click", { control: "repair-btn", carId: car.id, faultId }, true);
         repairSelectedCarFault(faultId);
@@ -235,7 +238,7 @@ function renderGarage() {
   cleanRow.className = "card";
   cleanRow.innerHTML = `Cosmetic cleaning | Cost: ${fmt(CONFIG.cosmeticCleanCost)} | Helps impulse/picky buyers | One-time`;
   const cleanBtn = document.createElement("button");
-  cleanBtn.textContent = car.cleanedOnce ? "Already Cleaned" : "Cheap Clean";
+  cleanBtn.textContent = car.cleanedOnce ? "Already Cleaned" : `Cheap Clean (-${fmt(CONFIG.cosmeticCleanCost)})`;
   cleanBtn.disabled = car.cleanedOnce;
   if (!car.cleanedOnce) {
     cleanBtn.addEventListener("click", () => {
@@ -247,7 +250,9 @@ function renderGarage() {
   cleanRow.appendChild(cleanBtn);
   el.repairActions.appendChild(cleanRow);
 
+  const inspectCost = Math.round(CONFIG.inspectCost * state.dailyEvent.inspectModifier * state.cityModifier.repairMult);
   el.inspectBtn.disabled = car.inspected;
+  el.inspectBtn.textContent = car.inspected ? "Inspect (already done)" : `Inspect (-${fmt(inspectCost)})`;
   const disableSaleButtons = state.buyersRemainingToday <= 0;
   el.sellQuickBtn.disabled = disableSaleButtons;
   el.sellFairBtn.disabled = disableSaleButtons;
@@ -255,7 +260,9 @@ function renderGarage() {
   el.sellCustomBtn.disabled = disableSaleButtons;
   el.sellJunkyardBtn.disabled = false;
   el.setCurrentCarBtn.disabled = state.currentCarId === car.id;
+  el.setCurrentCarBtn.textContent = state.currentCarId === car.id ? "Set As Road Car (selected)" : "Set As Road Car (no fee)";
   updateSellSliderLabel();
+  updateSellModeButtons();
   if (disableSaleButtons) {
     el.repairActions.insertAdjacentHTML("afterbegin", "<div class=\"notice\">No buyers left in this city. End day in Market to refresh buyers. Junkyard is still available.</div>");
   }
@@ -306,13 +313,13 @@ function renderTravelPanel() {
 
       if (!isRoad) {
         const junkBtn = document.createElement("button");
-        junkBtn.textContent = "Sell To Junkyard";
+        junkBtn.textContent = `Sell To Junkyard (+${fmt(calcJunkyardPrice(car))}, no fee)`;
         junkBtn.dataset.action = "travel-dispose-junkyard";
         junkBtn.dataset.carId = car.id;
         card.appendChild(junkBtn);
 
         const abandonBtn = document.createElement("button");
-        abandonBtn.textContent = "Abandon Car";
+        abandonBtn.textContent = "Abandon Car (no payout)";
         abandonBtn.dataset.action = "travel-dispose-abandon";
         abandonBtn.dataset.carId = car.id;
         card.appendChild(abandonBtn);
@@ -352,7 +359,8 @@ function renderTravelPanel() {
     `;
 
     const btn = document.createElement("button");
-    btn.textContent = `Drive To ${choice.city.name}`;
+    const fuelLabel = fuelEstimate != null ? ` (fuel -${fmt(fuelEstimate)})` : "";
+    btn.textContent = `Drive To ${choice.city.name}${fuelLabel}`;
     btn.dataset.choiceIndex = String(idx);
     btn.disabled = !roadCar || nonTravelCars.length > 0;
     card.appendChild(document.createElement("br"));
@@ -416,7 +424,7 @@ function renderDealHistory() {
           | Buyer: ${deal.buyerType}
           | Attempts: ${deal.saleAttempts}
           <br>
-          Work log: ${deal.workLog ? deal.workLog.map((w) => formatWorkLogEntry(w)).join(" | ") : "none"}
+          Work log: ${summarizeWorkLog(deal.workLog)}
         </div>
       `;
     })

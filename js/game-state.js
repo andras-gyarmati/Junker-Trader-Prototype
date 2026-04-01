@@ -85,6 +85,34 @@ function formatWorkLogEntry(w) {
   return `${dayLabel}:${w.kind}`;
 }
 
+function formatWorkLogEntryHuman(w) {
+  if (w.kind === "buy") return `Bought for ${fmt(w.amount)}`;
+  if (w.kind === "inspect") return `Inspection ${fmt(w.amount)}`;
+  if (w.kind === "repair") return `Repaired ${FAULTS[w.faultId]?.label || w.faultId} for ${fmt(w.amount)}`;
+  if (w.kind === "clean") return `Cleaned for ${fmt(w.amount)}`;
+  if (w.kind === "travel") return `Traveled to ${w.to} (${w.km}km, fuel ${fmt(w.amount)})`;
+  if (w.kind === "roadside_repair") return `Roadside fix ${FAULTS[w.faultId]?.label || w.faultId} for ${fmt(w.amount)}`;
+  if (w.kind === "emergency_repair") return `Emergency repair ${fmt(w.amount)}`;
+  if (w.kind === "sell_attempt") return `Sale attempt (${w.mode}) fee ${fmt(w.amount)}`;
+  if (w.kind === "sell_success") return `Sold for ${fmt(w.amount)}`;
+  if (w.kind === "junkyard_sale") return `Junkyard sale ${fmt(w.amount)}`;
+  if (w.kind === "sell_fail") return "Sale attempt failed";
+  if (w.kind === "abandon") return "Car abandoned";
+  return w.kind;
+}
+
+function summarizeWorkLog(entries) {
+  if (!entries || entries.length === 0) {
+    return "none";
+  }
+  let lastDay = null;
+  return entries.map((w) => {
+    const prefix = w.day !== lastDay ? `d${w.day}: ` : "";
+    lastDay = w.day;
+    return `${prefix}${formatWorkLogEntryHuman(w)}`;
+  }).join(" | ");
+}
+
 function estimateRepairValueGain(faultId) {
   const fallback = FAULTS[faultId].valueHit;
   const relevant = state.completedDeals.filter((d) => (d.allFaultsAtSale || []).includes(faultId));

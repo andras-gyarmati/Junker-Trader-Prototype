@@ -56,12 +56,35 @@ function updateSellSliderLabel() {
   const buyer = getCurrentBuyer();
   if (!car || !buyer) {
     el.sellSliderLabel.textContent = "No car selected.";
+    el.sellCustomBtn.textContent = "Offer Custom Price";
     return;
   }
   const trueValue = calcTrueValue(car) * state.dailyEvent.saleModifier * state.cityModifier.buyerRichness;
   const multiplier = getSellMultiplierFromSlider();
   const listPrice = Math.round(trueValue * multiplier);
   el.sellSliderLabel.textContent = `List: ${fmt(listPrice)} (${Math.round(multiplier * 100)}% of internal value ${fmt(trueValue)})`;
+  el.sellCustomBtn.textContent = `Offer Custom (${fmt(listPrice)}, fee ${fmt(CONFIG.sellAttemptFee)})`;
+}
+
+function updateSellModeButtons() {
+  const car = getSelectedInventoryCar();
+  if (!car) {
+    el.sellQuickBtn.textContent = "Sell Quick";
+    el.sellFairBtn.textContent = "Sell Fair";
+    el.sellPremiumBtn.textContent = "Sell Premium";
+    el.sellJunkyardBtn.textContent = "Sell To Junkyard";
+    return;
+  }
+
+  const base = calcTrueValue(car) * state.dailyEvent.saleModifier * state.cityModifier.buyerRichness;
+  const quickPrice = Math.round(base * CONFIG.selling.quickMultiplier);
+  const fairPrice = Math.round(base * CONFIG.selling.fairMultiplier);
+  const premiumPrice = Math.round(base * CONFIG.selling.premiumMultiplier);
+
+  el.sellQuickBtn.textContent = `Sell Quick (${fmt(quickPrice)}, fee ${fmt(CONFIG.sellAttemptFee)})`;
+  el.sellFairBtn.textContent = `Sell Fair (${fmt(fairPrice)}, fee ${fmt(CONFIG.sellAttemptFee)})`;
+  el.sellPremiumBtn.textContent = `Sell Premium (${fmt(premiumPrice)}, fee ${fmt(CONFIG.sellAttemptFee)})`;
+  el.sellJunkyardBtn.textContent = `Sell To Junkyard (+${fmt(calcJunkyardPrice(car))}, no fee)`;
 }
 
 function estimateExpectedSalePrice(car, buyer, priceMode = "fair", customMultiplier = null) {

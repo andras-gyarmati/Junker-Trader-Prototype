@@ -70,7 +70,8 @@
     ropeAnchors: [
       { x: 334, y: 300, len: 120, topY: 265 },
       { x: 538, y: 238, len: 125, topY: 203 },
-      { x: 624, y: 176, len: 125, topY: 141 }
+      { x: 624, y: 176, len: 125, topY: 141 },
+      { x: 832, y: 120, len: 90, topY: 85 }
     ],
     exit: { x: 835, y: 72, w: 46, h: 48 }
   };
@@ -79,8 +80,7 @@
     left: false,
     right: false,
     jump: false,
-    use: false,
-    rewind: false
+    use: false
   };
 
   function makeTrack() {
@@ -118,8 +118,9 @@
     maxSimFrame: 0,
     activeChar: CHAR.THROWER,
     rewinding: false,
+    rewindFramesLeft: 0,
     won: false,
-    msg: "Build timeline with both chars. Hold R to rewind. Release R to branch.",
+    msg: "Build timeline with both chars. Press R to rewind 1 second and branch.",
     tracks: [makeTrack(), makeTrack()],
     chars: [makeChar(0), makeChar(1)],
     ropeMask: 0,
@@ -243,6 +244,7 @@
     state.maxSimFrame = 0;
     state.activeChar = CHAR.THROWER;
     state.rewinding = false;
+    state.rewindFramesLeft = 0;
     state.won = false;
     state.msg = "Full reset. Create a new shared timeline.";
 
@@ -500,9 +502,11 @@
     loadSnapshot(state.frame);
   }
 
-  function beginRewind() {
+  function beginRewindOneSecond() {
+    if (state.rewinding) return;
     state.rewinding = true;
-    state.msg = "Rewinding timeline... release R to branch.";
+    state.rewindFramesLeft = 60;
+    state.msg = "Rewinding 1 second...";
   }
 
   function endRewindAndBranch() {
@@ -514,6 +518,7 @@
     }
 
     state.maxSimFrame = state.frame;
+    state.rewindFramesLeft = 0;
     state.msg = `${CHARACTER_DEF[state.activeChar].name} track truncated at frame ${state.frame}. Branching forward.`;
   }
 
@@ -604,8 +609,15 @@
     state.accumulator += delta;
 
     while (state.accumulator >= DT) {
-      if (state.rewinding) stepRewind();
-      else stepForward();
+      if (state.rewinding) {
+        stepRewind();
+        state.rewindFramesLeft -= 1;
+        if (state.rewindFramesLeft <= 0 || state.frame <= 0) {
+          endRewindAndBranch();
+        }
+      } else {
+        stepForward();
+      }
       state.accumulator -= DT;
     }
 
@@ -631,10 +643,7 @@
     }
 
     if (k === "r") {
-      if (!KEY.rewind) {
-        KEY.rewind = true;
-        beginRewind();
-      }
+      if (!ev.repeat) beginRewindOneSecond();
       return;
     }
 
@@ -651,10 +660,7 @@
     if (ev.key === " ") KEY.jump = false;
     if (k === "e") KEY.use = false;
 
-    if (k === "r") {
-      KEY.rewind = false;
-      endRewindAndBranch();
-    }
+    if (k === "r") return;
   }
 
   window.addEventListener("keydown", onKeyDown);

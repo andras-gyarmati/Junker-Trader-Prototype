@@ -1,6 +1,6 @@
 # Time-Loop Echo Platformer Prototype
 
-Tiny one-room prototype for validating a **shared two-character timeline** with hold-to-rewind and branching overwrite.
+Tiny one-room prototype for validating a **shared two-character timeline** with one-tap 1-second rewind and branching overwrite.
 
 ## Run
 
@@ -13,8 +13,8 @@ Open [index.html](/Users/andrasgyarmati/repos/used-car-trading-proto/prototypes/
   - Rope
 - You control one character at a time and can switch anytime (`Q`/`Tab`).
 - Both characters continuously record/replay on a shared frame timeline.
-- Hold `R`: world rewinds backward frame-by-frame (no new interactions triggered).
-- Release `R`: active character track is truncated at that frame and rewrites from there.
+- Press `R`: world auto-rewinds 1 second (60 frames) with no new interactions triggered.
+- Rewind ends automatically, then active character track is truncated at that frame and rewrites from there.
 - Non-active character keeps prior recording and replays until it runs out, then records idle frames.
 
 ## Abilities

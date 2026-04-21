@@ -4,6 +4,8 @@
   const WIDTH = 900;
   const HEIGHT = 420;
   const DT = 1 / 60;
+  const INSTANT_REWIND_FRAMES = 60;
+  const HOLD_REWIND_THRESHOLD_MS = 140;
 
   const INPUT_LEFT = 1 << 0;
   const INPUT_RIGHT = 1 << 1;
@@ -80,7 +82,8 @@
     left: false,
     right: false,
     jump: false,
-    use: false
+    use: false,
+    rewind: false
   };
 
   function makeTrack() {
@@ -118,9 +121,10 @@
     maxSimFrame: 0,
     activeChar: CHAR.THROWER,
     rewinding: false,
-    rewindFramesLeft: 0,
+    pendingRewindTap: false,
+    rewindDownAtMs: 0,
     won: false,
-    msg: "Build timeline with both chars. Press R to rewind 1 second and branch.",
+    msg: "Build timeline with both chars. Tap R = instant 1s rewind. Hold R = visual rewind.",
     tracks: [makeTrack(), makeTrack()],
     chars: [makeChar(0), makeChar(1)],
     ropeMask: 0,
@@ -155,6 +159,10 @@
 
   function rectOverlap(a, b) {
     return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function horizontalOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x;
   }
 
   function ensureTrackCap(track, frame) {
@@ -244,7 +252,8 @@
     state.maxSimFrame = 0;
     state.activeChar = CHAR.THROWER;
     state.rewinding = false;
-    state.rewindFramesLeft = 0;
+    state.pendingRewindTap = false;
+    state.rewindDownAtMs = 0;
     state.won = false;
     state.msg = "Full reset. Create a new shared timeline.";
 
@@ -442,11 +451,63 @@
     const thrower = state.chars[CHAR.THROWER];
     const rope = state.chars[CHAR.ROPE];
     if (thrower.throwActive <= 0) return;
-    if (!rectOverlap(thrower, rope)) return;
+
+    const overlapNow = rectOverlap(thrower, rope);
+    const onHeadNow =
+      horizontalOverlap(thrower, rope) &&
+      Math.abs((rope.y + rope.h) - thrower.y) <= 4;
+    if (!overlapNow && !onHeadNow) return;
 
     rope.vx = 0;
     rope.vy = THROW.launchVY;
     rope.grounded = false;
+  }
+
+  function resolveCharacterCollision(a, b, prevAX, prevAY, prevBX, prevBY) {
+    if (!rectOverlap(a, b)) return;
+
+    const overlapX = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const overlapY = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    if (overlapX <= 0 || overlapY <= 0) return;
+
+    const aWasAbove = prevAY + a.h <= prevBY + 1;
+    const bWasAbove = prevBY + b.h <= prevAY + 1;
+
+    if (overlapY <= overlapX && (aWasAbove || bWasAbove)) {
+      if (aWasAbove) {
+        a.y = b.y - a.h;
+        a.vy = 0;
+        a.grounded = true;
+      } else {
+        b.y = a.y - b.h;
+        b.vy = 0;
+        b.grounded = true;
+      }
+      return;
+    }
+
+    if (overlapX <= overlapY) {
+      if (a.x + a.w * 0.5 < b.x + b.w * 0.5) {
+        a.x -= overlapX * 0.5;
+        b.x += overlapX * 0.5;
+      } else {
+        a.x += overlapX * 0.5;
+        b.x -= overlapX * 0.5;
+      }
+      a.vx = 0;
+      b.vx = 0;
+      return;
+    }
+
+    if (a.y + a.h * 0.5 < b.y + b.h * 0.5) {
+      a.y -= overlapY * 0.5;
+      b.y += overlapY * 0.5;
+    } else {
+      a.y += overlapY * 0.5;
+      b.y -= overlapY * 0.5;
+    }
+    a.vy = 0;
+    b.vy = 0;
   }
 
   function checkWinCondition() {
@@ -467,6 +528,10 @@
 
     const chA = state.chars[CHAR.THROWER];
     const chB = state.chars[CHAR.ROPE];
+    const prevAX = chA.x;
+    const prevAY = chA.y;
+    const prevBX = chB.x;
+    const prevBY = chB.y;
 
     tryRopeAbility(chA, frameInputA);
     tryRopeAbility(chB, frameInputB);
@@ -476,6 +541,8 @@
 
     applyMovement(chA, frameInputA);
     applyMovement(chB, frameInputB);
+
+    resolveCharacterCollision(chA, chB, prevAX, prevAY, prevBX, prevBY);
 
     handleThrowInteraction();
 
@@ -502,14 +569,13 @@
     loadSnapshot(state.frame);
   }
 
-  function beginRewindOneSecond() {
+  function beginVisualRewind() {
     if (state.rewinding) return;
     state.rewinding = true;
-    state.rewindFramesLeft = 60;
-    state.msg = "Rewinding 1 second...";
+    state.msg = "Visual rewind...";
   }
 
-  function endRewindAndBranch() {
+  function endRewindAndBranch(messageOverride) {
     state.rewinding = false;
 
     const activeTrack = state.tracks[state.activeChar];
@@ -518,8 +584,17 @@
     }
 
     state.maxSimFrame = state.frame;
-    state.rewindFramesLeft = 0;
-    state.msg = `${CHARACTER_DEF[state.activeChar].name} track truncated at frame ${state.frame}. Branching forward.`;
+    state.msg =
+      messageOverride ||
+      `${CHARACTER_DEF[state.activeChar].name} track truncated at frame ${state.frame}. Branching forward.`;
+  }
+
+  function instantRewindAndBranch(frames) {
+    const before = state.frame;
+    const target = Math.max(0, state.frame - frames);
+    state.frame = target;
+    loadSnapshot(state.frame);
+    endRewindAndBranch(`Instant rewind: ${before} -> ${target}`);
   }
 
   function drawRect(x, y, w, h, color) {
@@ -597,7 +672,7 @@
     debugEl.innerHTML = [
       `<div>Thrower track len: ${state.tracks[0].len}</div>`,
       `<div>Rope track len: ${state.tracks[1].len}</div>`,
-      `<div>Rope mask bits: ${state.ropeMask.toString(2).padStart(3, "0")}</div>`,
+      `<div>Rope mask bits: ${state.ropeMask.toString(2).padStart(LEVEL.ropeAnchors.length, "0")}</div>`,
       `<div>Max frame reached: ${state.maxSimFrame}</div>`
     ].join("");
   }
@@ -608,13 +683,16 @@
     state.lastTs = ts;
     state.accumulator += delta;
 
+    if (KEY.rewind && state.pendingRewindTap && !state.rewinding) {
+      if (ts - state.rewindDownAtMs >= HOLD_REWIND_THRESHOLD_MS) {
+        state.pendingRewindTap = false;
+        beginVisualRewind();
+      }
+    }
+
     while (state.accumulator >= DT) {
       if (state.rewinding) {
         stepRewind();
-        state.rewindFramesLeft -= 1;
-        if (state.rewindFramesLeft <= 0 || state.frame <= 0) {
-          endRewindAndBranch();
-        }
       } else {
         stepForward();
       }
@@ -643,7 +721,11 @@
     }
 
     if (k === "r") {
-      if (!ev.repeat) beginRewindOneSecond();
+      if (!ev.repeat) {
+        KEY.rewind = true;
+        state.pendingRewindTap = true;
+        state.rewindDownAtMs = performance.now();
+      }
       return;
     }
 
@@ -660,7 +742,16 @@
     if (ev.key === " ") KEY.jump = false;
     if (k === "e") KEY.use = false;
 
-    if (k === "r") return;
+    if (k === "r") {
+      KEY.rewind = false;
+      if (state.rewinding) {
+        endRewindAndBranch();
+      } else if (state.pendingRewindTap) {
+        instantRewindAndBranch(INSTANT_REWIND_FRAMES);
+      }
+      state.pendingRewindTap = false;
+      return;
+    }
   }
 
   window.addEventListener("keydown", onKeyDown);

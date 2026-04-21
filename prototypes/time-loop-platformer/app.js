@@ -19,20 +19,20 @@
     {
       id: "thrower",
       name: "Thrower",
-      w: 24,
-      h: 34,
+      w: 16,
+      h: 24,
       maxSpeed: 3.8,
-      jumpVel: -11.6,
+      jumpVel: -8.2,
       color: "#e74c3c",
       ghost: "rgba(231,76,60,0.35)"
     },
     {
       id: "rope",
       name: "Rope",
-      w: 22,
-      h: 32,
+      w: 16,
+      h: 24,
       maxSpeed: 3.8,
-      jumpVel: -11.6,
+      jumpVel: -8.2,
       color: "#8e44ad",
       ghost: "rgba(142,68,173,0.35)"
     }
@@ -49,9 +49,9 @@
   };
 
   const THROW = {
-    windowFrames: 12,
+    chargeFrames: 18,
+    activeFrames: 6,
     cooldownFrames: 26,
-    launchVX: 6.9,
     launchVY: -11.8
   };
 
@@ -70,7 +70,7 @@
     ropeAnchors: [
       { x: 334, y: 300, len: 120, topY: 265 },
       { x: 538, y: 238, len: 125, topY: 203 },
-      { x: 742, y: 176, len: 125, topY: 141 }
+      { x: 624, y: 176, len: 125, topY: 141 }
     ],
     exit: { x: 835, y: 72, w: 46, h: 48 }
   };
@@ -106,7 +106,8 @@
       jumpBuffer: 0,
       prevInput: 0,
       facing: 1,
-      throwWindow: 0,
+      throwCharge: 0,
+      throwActive: 0,
       throwCooldown: 0
     };
   }
@@ -133,6 +134,7 @@
       prevInput: new Uint8Array(2048 * 2),
       facing: new Int8Array(2048 * 2),
       throwWindow: new Uint8Array(2048 * 2),
+      throwActive: new Uint8Array(2048 * 2),
       throwCooldown: new Uint8Array(2048 * 2),
       ropeMask: new Uint8Array(2048),
       won: new Uint8Array(2048)
@@ -185,6 +187,7 @@
     state.snapshots.prevInput = grow(state.snapshots.prevInput, Uint8Array, 2);
     state.snapshots.facing = grow(state.snapshots.facing, Int8Array, 2);
     state.snapshots.throwWindow = grow(state.snapshots.throwWindow, Uint8Array, 2);
+    state.snapshots.throwActive = grow(state.snapshots.throwActive, Uint8Array, 2);
     state.snapshots.throwCooldown = grow(state.snapshots.throwCooldown, Uint8Array, 2);
     state.snapshots.ropeMask = grow(state.snapshots.ropeMask, Uint8Array, 1);
     state.snapshots.won = grow(state.snapshots.won, Uint8Array, 1);
@@ -206,7 +209,8 @@
       state.snapshots.jumpBuffer[p] = ch.jumpBuffer;
       state.snapshots.prevInput[p] = ch.prevInput;
       state.snapshots.facing[p] = ch.facing;
-      state.snapshots.throwWindow[p] = ch.throwWindow;
+      state.snapshots.throwWindow[p] = ch.throwCharge;
+      state.snapshots.throwActive[p] = ch.throwActive;
       state.snapshots.throwCooldown[p] = ch.throwCooldown;
     }
     state.snapshots.ropeMask[frame] = state.ropeMask;
@@ -226,7 +230,8 @@
       ch.jumpBuffer = state.snapshots.jumpBuffer[p];
       ch.prevInput = state.snapshots.prevInput[p];
       ch.facing = state.snapshots.facing[p] || 1;
-      ch.throwWindow = state.snapshots.throwWindow[p];
+      ch.throwCharge = state.snapshots.throwWindow[p];
+      ch.throwActive = state.snapshots.throwActive[p];
       ch.throwCooldown = state.snapshots.throwCooldown[p];
     }
     state.ropeMask = state.snapshots.ropeMask[frame];
@@ -335,10 +340,7 @@
     }
   }
 
-  function tryClimbInstant(ch, inputMask) {
-    const justUse = (inputMask & INPUT_USE) !== 0 && (ch.prevInput & INPUT_USE) === 0;
-    if (!justUse) return;
-
+  function tryClimbInstant(ch) {
     const ropeIdx = isOnRope(ch);
     if (ropeIdx < 0) return;
     const a = LEVEL.ropeAnchors[ropeIdx];
@@ -357,11 +359,18 @@
 
     const justUse = (inputMask & INPUT_USE) !== 0 && (ch.prevInput & INPUT_USE) === 0;
     if (justUse && ch.throwCooldown <= 0) {
-      ch.throwWindow = THROW.windowFrames;
+      ch.throwCharge = THROW.chargeFrames;
       ch.throwCooldown = THROW.cooldownFrames;
     }
 
-    if (ch.throwWindow > 0) ch.throwWindow -= 1;
+    if (ch.throwCharge > 0) {
+      ch.throwCharge -= 1;
+      if (ch.throwCharge === 0) {
+        ch.throwActive = THROW.activeFrames;
+      }
+    } else if (ch.throwActive > 0) {
+      ch.throwActive -= 1;
+    }
   }
 
   function applyMovement(ch, inputMask) {
@@ -430,10 +439,10 @@
   function handleThrowInteraction() {
     const thrower = state.chars[CHAR.THROWER];
     const rope = state.chars[CHAR.ROPE];
-    if (thrower.throwWindow <= 0) return;
+    if (thrower.throwActive <= 0) return;
     if (!rectOverlap(thrower, rope)) return;
 
-    rope.vx = thrower.facing * THROW.launchVX;
+    rope.vx = 0;
     rope.vy = THROW.launchVY;
     rope.grounded = false;
   }
@@ -468,8 +477,8 @@
 
     handleThrowInteraction();
 
-    tryClimbInstant(chA, frameInputA);
-    tryClimbInstant(chB, frameInputB);
+    tryClimbInstant(chA);
+    tryClimbInstant(chB);
 
     chA.prevInput = frameInputA;
     chB.prevInput = frameInputB;
@@ -540,8 +549,12 @@
       const isActive = c === state.activeChar;
       drawRect(ch.x, ch.y, ch.w, ch.h, isActive ? d.color : d.ghost);
 
-      if (c === CHAR.THROWER && ch.throwWindow > 0) {
-        drawRect(ch.x - 4, ch.y - 8, ch.w + 8, ch.h + 10, "rgba(255,120,0,0.35)");
+      if (c === CHAR.THROWER && ch.throwCharge > 0) {
+        const p = 1 - (ch.throwCharge / THROW.chargeFrames);
+        const grow = Math.floor(4 + p * 14);
+        drawRect(ch.x - 3, ch.y - grow, ch.w + 6, ch.h + grow, "rgba(255,180,0,0.35)");
+      } else if (c === CHAR.THROWER && ch.throwActive > 0) {
+        drawRect(ch.x - 5, ch.y - 10, ch.w + 10, ch.h + 12, "rgba(255,90,0,0.45)");
       }
 
       ctx.fillStyle = "#111";

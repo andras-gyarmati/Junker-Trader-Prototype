@@ -19,8 +19,8 @@ Open [index.html](/Users/andrasgyarmati/repos/used-car-trading-proto/prototypes/
 
 ## Abilities
 
-- Thrower: `E` opens a short throw window. If overlapping rope character, rope character gets launch velocity.
-- Rope: `E` near anchor places rope; `E` while overlapping rope instantly climbs to rope top.
+- Thrower: `E` starts a short charge-up, then triggers a brief throw pulse. If overlapping rope character at pulse time, rope character gets pure upward launch velocity (no horizontal boost).
+- Rope: `E` near anchor places rope; touching rope instantly climbs to rope top.
 
 ## Win Rule
 

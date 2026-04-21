@@ -4,8 +4,10 @@
   const WIDTH = 900;
   const HEIGHT = 420;
   const DT = 1 / 60;
-  const INSTANT_REWIND_FRAMES = 60;
+  const GAME_SPEED = 0.75;
+  const INSTANT_REWIND_FRAMES = 120;
   const HOLD_REWIND_THRESHOLD_MS = 140;
+  const HOLD_REWIND_SPEED = 2;
 
   const INPUT_LEFT = 1 << 0;
   const INPUT_RIGHT = 1 << 1;
@@ -51,7 +53,7 @@
   };
 
   const THROW = {
-    chargeFrames: 18,
+    chargeFrames: 34,
     activeFrames: 6,
     cooldownFrames: 26,
     launchVY: -11.8
@@ -126,7 +128,7 @@
     autoReplay: false,
     autoReplayFrame: 0,
     won: false,
-    msg: "Build timeline with both chars. Tap R = instant 1s rewind. Hold R = visual rewind.",
+    msg: "Build timeline with both chars. Tap R = instant 2s rewind. Hold R = visual rewind.",
     tracks: [makeTrack(), makeTrack()],
     chars: [makeChar(0), makeChar(1)],
     ropeMask: 0,
@@ -796,7 +798,7 @@
     if (!state.lastTs) state.lastTs = ts;
     const delta = Math.min(0.1, (ts - state.lastTs) / 1000);
     state.lastTs = ts;
-    state.accumulator += delta;
+    state.accumulator += delta * GAME_SPEED;
 
     if (KEY.rewind && state.pendingRewindTap && !state.rewinding) {
       if (ts - state.rewindDownAtMs >= HOLD_REWIND_THRESHOLD_MS) {
@@ -809,7 +811,10 @@
       if (state.autoReplay) {
         stepAutoReplay();
       } else if (state.rewinding) {
-        stepRewind();
+        for (let i = 0; i < HOLD_REWIND_SPEED; i += 1) {
+          stepRewind();
+          if (state.frame <= 0) break;
+        }
       } else {
         stepForward();
       }

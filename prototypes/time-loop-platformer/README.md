@@ -13,8 +13,8 @@ Open [index.html](/Users/andrasgyarmati/repos/used-car-trading-proto/prototypes/
   - Rope
 - You control one character at a time and can switch anytime (`Q`/`Tab`).
 - Both characters continuously record/replay on a shared frame timeline.
-- Tap `R`: instant rewind 1 second (60 frames), then immediate branch.
-- Hold `R`: visual rewind playback frame-by-frame.
+- Tap `R`: instant rewind 2 seconds (120 frames), then immediate branch.
+- Hold `R`: visual rewind playback at 2x reverse speed.
 - Release `R`: active character track is truncated at that frame and rewrites from there.
 - Non-active character keeps prior recording and replays until it runs out, then records idle frames.
 

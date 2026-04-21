@@ -8,6 +8,7 @@
   const INSTANT_REWIND_FRAMES = 120;
   const HOLD_REWIND_THRESHOLD_MS = 140;
   const HOLD_REWIND_SPEED = 2;
+  const FINAL_REPLAY_SPEED = 2;
 
   const INPUT_LEFT = 1 << 0;
   const INPUT_RIGHT = 1 << 1;
@@ -127,6 +128,7 @@
     rewindDownAtMs: 0,
     autoReplay: false,
     autoReplayFrame: 0,
+    sessionEnded: false,
     won: false,
     msg: "Build timeline with both chars. Tap R = instant 2s rewind. Hold R = visual rewind.",
     tracks: [makeTrack(), makeTrack()],
@@ -262,6 +264,7 @@
     state.rewindDownAtMs = 0;
     state.autoReplay = false;
     state.autoReplayFrame = 0;
+    state.sessionEnded = false;
     state.won = false;
     state.msg = "Full reset. Create a new shared timeline.";
 
@@ -536,7 +539,8 @@
     if (!state.autoReplay) return;
     if (state.autoReplayFrame > state.maxSimFrame) {
       state.autoReplay = false;
-      state.msg = "Auto replay finished. Press Enter to reset.";
+      state.sessionEnded = true;
+      state.msg = "Auto replay finished. Timeline stopped. Press Enter to reset.";
       return;
     }
     state.frame = state.autoReplayFrame;
@@ -782,6 +786,7 @@
     const activeName = CHARACTER_DEF[state.activeChar].name;
     statusEl.innerHTML = [
       `<div class="stat"><strong>Active:</strong> ${activeName} | <strong>Frame:</strong> ${state.frame} | <strong>Rewinding:</strong> ${state.rewinding ? "YES" : "NO"} | <strong>Auto Replay:</strong> ${state.autoReplay ? "YES" : "NO"}</div>`,
+      `<div class="stat"><strong>Timeline State:</strong> ${state.sessionEnded ? "STOPPED" : "LIVE"}</div>`,
       `<div class="stat"><strong>Win rule:</strong> both characters must overlap exit at same time</div>`,
       `<div class="small">${state.msg}</div>`
     ].join("");
@@ -809,13 +814,16 @@
 
     while (state.accumulator >= DT) {
       if (state.autoReplay) {
-        stepAutoReplay();
+        for (let i = 0; i < FINAL_REPLAY_SPEED; i += 1) {
+          stepAutoReplay();
+          if (!state.autoReplay) break;
+        }
       } else if (state.rewinding) {
         for (let i = 0; i < HOLD_REWIND_SPEED; i += 1) {
           stepRewind();
           if (state.frame <= 0) break;
         }
-      } else {
+      } else if (!state.sessionEnded) {
         stepForward();
       }
       state.accumulator -= DT;
@@ -831,7 +839,7 @@
   function onKeyDown(ev) {
     const k = ev.key.toLowerCase();
 
-    if (state.autoReplay && ev.key !== "Enter") {
+    if ((state.autoReplay || state.sessionEnded) && ev.key !== "Enter") {
       return;
     }
 

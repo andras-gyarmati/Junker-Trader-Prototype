@@ -70,10 +70,10 @@
       { x: 810, y: 120, w: 90, h: 16 }
     ],
     ropeAnchors: [
-      { x: 334, y: 300, len: 120, topY: 265 },
-      { x: 538, y: 238, len: 125, topY: 203 },
-      { x: 624, y: 176, len: 125, topY: 141 },
-      { x: 832, y: 120, len: 90, topY: 85 }
+      { x: 350, y: 300, len: 120, topY: 265 },
+      { x: 555, y: 238, len: 125, topY: 203 },
+      { x: 620, y: 176, len: 125, topY: 141 },
+      { x: 810, y: 120, len: 90, topY: 85 }
     ],
     exit: { x: 835, y: 72, w: 46, h: 48 }
   };
@@ -150,6 +150,8 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
+  const timelineCanvas = document.getElementById("timeline");
+  const tctx = timelineCanvas.getContext("2d");
   const statusEl = document.getElementById("status");
   const debugEl = document.getElementById("debug");
 
@@ -602,6 +604,109 @@
     ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
   }
 
+  function timelineFrameToX(frame, maxFrame, width) {
+    const firstCap = 300;
+    if (maxFrame <= 1) return 0;
+    if (maxFrame <= firstCap) {
+      return (frame / maxFrame) * width;
+    }
+    if (frame <= firstCap) {
+      return (frame / firstCap) * (width * 0.75);
+    }
+    const overflow = maxFrame - firstCap;
+    if (overflow <= 0) return width * 0.75;
+    return width * 0.75 + ((frame - firstCap) / overflow) * (width * 0.25);
+  }
+
+  function drawActionMarker(x, y, kind, color) {
+    tctx.fillStyle = color;
+    tctx.strokeStyle = color;
+    tctx.lineWidth = 1;
+    if (kind === "jump") {
+      tctx.beginPath();
+      tctx.moveTo(x, y - 5);
+      tctx.lineTo(x - 4, y + 3);
+      tctx.lineTo(x + 4, y + 3);
+      tctx.closePath();
+      tctx.fill();
+      return;
+    }
+    if (kind === "throw") {
+      tctx.fillRect(x - 3.5, y - 3.5, 7, 7);
+      return;
+    }
+    if (kind === "rope") {
+      tctx.beginPath();
+      tctx.arc(x, y, 3.5, 0, Math.PI * 2);
+      tctx.fill();
+    }
+  }
+
+  function renderTimeline() {
+    const w = timelineCanvas.width;
+    const h = timelineCanvas.height;
+    tctx.fillStyle = "#f7f7f7";
+    tctx.fillRect(0, 0, w, h);
+
+    const pad = 16;
+    const laneW = w - pad * 2;
+    const laneH = 40;
+    const laneGap = 26;
+    const laneTopA = 26;
+    const laneTopB = laneTopA + laneH + laneGap;
+
+    const trA = state.tracks[CHAR.THROWER];
+    const trB = state.tracks[CHAR.ROPE];
+    const maxFrame = Math.max(state.maxSimFrame, trA.len, trB.len, state.frame + 1, 1);
+    const playX = pad + timelineFrameToX(state.frame, maxFrame, laneW);
+
+    function drawLane(charIdx, laneTop) {
+      const tr = state.tracks[charIdx];
+      const name = CHARACTER_DEF[charIdx].name;
+      const color = CHARACTER_DEF[charIdx].color;
+
+      tctx.fillStyle = "#e5e5e5";
+      tctx.fillRect(pad, laneTop, laneW, laneH);
+
+      const lenX = pad + timelineFrameToX(tr.len, maxFrame, laneW);
+      tctx.fillStyle = "rgba(50,50,50,0.16)";
+      tctx.fillRect(pad, laneTop, Math.max(0, lenX - pad), laneH);
+
+      tctx.fillStyle = color;
+      tctx.font = "12px monospace";
+      tctx.fillText(name, pad, laneTop - 6);
+
+      let prev = 0;
+      for (let f = 0; f < tr.len; f += 1) {
+        const cur = tr.input[f];
+        const justJump = (cur & INPUT_JUMP) !== 0 && (prev & INPUT_JUMP) === 0;
+        const justUse = (cur & INPUT_USE) !== 0 && (prev & INPUT_USE) === 0;
+        if (justJump || justUse) {
+          const x = pad + timelineFrameToX(f, maxFrame, laneW);
+          const y = laneTop + laneH * 0.5;
+          if (justJump) {
+            drawActionMarker(x, y, "jump", "#333");
+          }
+          if (justUse) {
+            if (charIdx === CHAR.THROWER) drawActionMarker(x, y + 10, "throw", "#b22222");
+            else drawActionMarker(x, y + 10, "rope", "#5a2d91");
+          }
+        }
+        prev = cur;
+      }
+    }
+
+    drawLane(CHAR.THROWER, laneTopA);
+    drawLane(CHAR.ROPE, laneTopB);
+
+    tctx.strokeStyle = "#0c0c0c";
+    tctx.lineWidth = 2;
+    tctx.beginPath();
+    tctx.moveTo(playX, 12);
+    tctx.lineTo(playX, h - 8);
+    tctx.stroke();
+  }
+
   function render() {
     drawRect(0, 0, WIDTH, HEIGHT, "#d7edff");
 
@@ -700,6 +805,7 @@
     }
 
     render();
+    renderTimeline();
     updateUi();
 
     requestAnimationFrame(tick);

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Junker Road Trip Prototype</title>
+  <style>
+    body { font-family: monospace; margin: 10px; background: #f4f4f4; }
+    h1, h2, h3 { margin: 0 0 8px 0; }
+    .topbar { margin-bottom: 8px; padding: 6px; background: #fff; border: 1px solid #ccc; font-size: 12px; }
+    .panel { display: none; background: #fff; border: 1px solid #ccc; padding: 8px; margin-bottom: 8px; }
+    .panel.active { display: block; }
+    .card { border: 1px solid #aaa; padding: 6px; margin-bottom: 6px; background: #fafafa; font-size: 12px; }
+    button { margin: 3px 3px 3px 0; }
+    .log { white-space: pre-line; background: #111; color: #0f0; padding: 8px; min-height: 120px; }
+    .small { color: #666; font-size: 12px; }
+    .graphs { background: #fff; border: 1px solid #ccc; padding: 12px; margin-bottom: 10px; }
+    .graph-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .graph-wrap { margin-bottom: 0; flex: 1 1 320px; min-width: 280px; }
+    svg { background: #fafafa; border: 1px solid #bbb; width: 100%; max-width: 700px; height: 130px; }
+    .cards-grid { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+    .notice { background: #fff8d8; border: 1px solid #d9c974; padding: 6px; margin-bottom: 6px; font-size: 12px; }
+    .market-divider { margin: 8px 0 6px 0; padding-top: 6px; border-top: 1px dashed #bdbdbd; font-size: 12px; color: #444; }
+  </style>
+</head>
+<body>
+  <div class="small"><a href="../../index.html">Back To Prototype Hub</a></div>
+  <h1>Junker Road Trip Prototype</h1>
+
+  <div class="topbar" id="topbar"></div>
+  <div id="run-status-panel" class="card"></div>
+  <div id="current-car-panel" class="card"></div>
+  <div id="buyer-forecast" class="card"></div>
+
+  <section id="market-panel" class="panel active">
+    <h2>Market</h2>
+    <div class="market-divider"><strong>Listings</strong> (seller info is on each card)</div>
+    <div id="market-cars" class="cards-grid"></div>
+    <button id="to-garage-from-market-btn">Go To Garage</button>
+    <button id="to-travel-btn">Travel Planner</button>
+    <button id="next-day-btn">Wait 1 Day</button>
+    <p class="small">No direct market estimate shown. Use your own sale history notebook.</p>
+  </section>
+
+  <section id="travel-panel" class="panel">
+    <h2>Travel Planner</h2>
+    <div id="travel-choices" class="cards-grid"></div>
+    <button id="travel-back-market-btn">Back To City Market</button>
+  </section>
+
+  <section id="event-panel" class="panel">
+    <h2>Road Event</h2>
+    <div id="event-content"></div>
+    <div id="event-actions"></div>
+  </section>
+
+  <section id="negotiation-panel" class="panel">
+    <h2>Negotiation</h2>
+    <div id="negotiation-content"></div>
+    <div class="card">
+      <strong>Custom Offer</strong><br>
+      <input id="offer-slider" type="range" min="60" max="120" value="90" />
+      <div id="offer-slider-label" class="small"></div>
+      <button id="offer-custom">Submit Custom Offer</button>
+    </div>
+    <button id="offer-lowball">Lowball</button>
+    <button id="offer-fair">Fair Offer</button>
+    <button id="offer-asking">Pay Asking</button>
+    <button id="walk-away">Walk Away</button>
+  </section>
+
+  <section id="garage-panel" class="panel">
+    <h2>Garage / Inventory</h2>
+    <div id="inventory-list" class="cards-grid"></div>
+    <div id="garage-content"></div>
+    <div id="repair-actions" class="cards-grid"></div>
+    <button id="inspect-btn">Inspect</button>
+    <div class="card">
+      <strong>Custom List Price</strong><br>
+      <input id="sell-slider" type="range" min="70" max="130" value="100" />
+      <div id="sell-slider-label" class="small"></div>
+      <button id="sell-custom-btn">Offer Custom Price</button>
+    </div>
+    <button id="sell-quick-btn">Sell Quick</button>
+    <button id="sell-fair-btn">Sell Fair</button>
+    <button id="sell-premium-btn">Sell Premium</button>
+    <button id="sell-junkyard-btn">Sell To Junkyard</button>
+    <button id="set-current-car-btn">Set As Road Car</button>
+    <button id="to-travel-from-garage-btn">Travel Planner</button>
+    <button id="to-market-from-garage-btn">Back To Market</button>
+  </section>
+
+  <section id="sale-panel" class="panel">
+    <h2>Sale Result</h2>
+    <div id="sale-content"></div>
+    <div id="counteroffer-panel" class="card">
+      <strong>Counteroffer</strong><br>
+      <input id="counteroffer-slider" type="range" min="100" max="140" value="105" />
+      <div id="counteroffer-slider-label" class="small"></div>
+      <button id="counteroffer-btn">Send Counteroffer</button>
+    </div>
+    <button id="accept-sale-btn">Accept Offer</button>
+    <button id="reject-sale-btn">Reject Offer</button>
+    <button id="continue-btn">Continue</button>
+  </section>
+
+  <section class="graphs">
+    <h3>Run Graphs</h3>
+    <div class="graph-row">
+      <div class="graph-wrap">
+        <div class="small">Balance</div>
+        <svg id="money-graph" viewBox="0 0 700 130" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="graph-wrap">
+        <div class="small">Spent (red) vs Revenue (green)</div>
+        <svg id="economy-graph" viewBox="0 0 700 130" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+  </section>
+
+  <section class="graphs">
+    <h3>Completed Deals</h3>
+    <div id="deal-history" class="small"></div>
+  </section>
+
+  <section class="graphs">
+    <h3>Log Files</h3>
+    <div class="small">
+      Run JSON: <a id="run-log-link" href="#" download>not ready</a><br>
+      Actions NDJSON: <a id="actions-log-link" href="#" download>not ready</a><br>
+      <span id="persistence-status">Persistence: initializing</span>
+    </div>
+  </section>
+
+  <section>
+    <h3>Event Log</h3>
+    <div id="event-log" class="log"></div>
+  </section>
+
+  <script src="js/config.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/persistence.js"></script>
+  <script src="js/game-state.js"></script>
+  <script src="js/car-value.js"></script>
+  <script src="js/car-generation.js"></script>
+  <script src="js/negotiation.js"></script>
+  <script src="js/inventory.js"></script>
+  <script src="js/selling.js"></script>
+  <script src="js/travel.js"></script>
+  <script src="js/rendering.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

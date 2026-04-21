@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Backpack Europe Prototype</title>
+  <style>
+    body { font-family: monospace; margin: 12px; background: #f4f4f4; }
+    h1, h2 { margin: 0 0 8px 0; }
+    .row { margin-bottom: 8px; padding: 8px; border: 1px solid #bbb; background: #fff; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; }
+    .card { border: 1px solid #aaa; padding: 8px; background: #fafafa; }
+    .log { white-space: pre-line; background: #111; color: #0f0; padding: 8px; min-height: 140px; }
+    button { margin-top: 6px; }
+    .small { color: #555; }
+  </style>
+</head>
+<body>
+  <div class="small"><a href="../../index.html">Back To Prototype Hub</a></div>
+  <h1>Backpack Europe Prototype (Very Early)</h1>
+
+  <div id="status" class="row"></div>
+
+  <section class="row">
+    <h2>Travel Options</h2>
+    <div id="choices" class="cards"></div>
+    <button id="rest-btn">Rest In City (recover energy, lose time)</button>
+  </section>
+
+  <section class="row">
+    <h2>Event</h2>
+    <div id="event"></div>
+  </section>
+
+  <section class="row">
+    <h2>Journey Log</h2>
+    <div id="log" class="log"></div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

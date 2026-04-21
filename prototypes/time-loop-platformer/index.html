@@ -16,30 +16,30 @@
 </head>
 <body>
   <div class="small"><a href="../../index.html">Back To Prototype Hub</a></div>
-  <h1>Time-Loop Echo Platformer (Tiny Prototype)</h1>
+  <h1>Time-Loop Echo Platformer (2-Character Timeline)</h1>
 
   <div class="panel">
     <div id="status"></div>
-    <div class="small">Goal: reach the green exit using rewinded echoes.</div>
+    <div class="small">Goal: get both characters into the green exit in the same timeline state.</div>
   </div>
 
   <div class="row">
     <canvas id="game" width="900" height="420"></canvas>
-    <div class="panel" style="max-width: 330px;">
+    <div class="panel" style="max-width: 340px;">
       <h2>Controls</h2>
       <div class="small">
         A/D or Left/Right: move<br>
         Space: jump<br>
-        E: ability (strong throw / rope place)<br>
-        Q or Tab: cycle next character<br>
-        R: rewind (commit run + reset room)<br>
-        Enter: full reset (clear all runs)
+        E: ability (throw window / rope place / rope climb)<br>
+        Q or Tab: switch controlled character anytime<br>
+        Hold R: rewind world backward<br>
+        Release R: branch (truncate active track, rewrite from now)<br>
+        Enter: full reset
       </div>
-      <h2 style="margin-top: 10px;">Character Roles</h2>
+      <h2 style="margin-top: 10px;">Roles</h2>
       <div class="small">
-        Strong: normal move/jump, can launch overlapping active character during throw window.<br>
-        Agile: faster and higher jump.<br>
-        Rope: can place one rope at anchor point.
+        Thrower: ability opens throw window (shown as taller orange state).<br>
+        Rope: ability places rope on marked anchors; on rope, press E to instantly climb.
       </div>
       <h2 style="margin-top: 10px;">Debug</h2>
       <div id="debug" class="small"></div>

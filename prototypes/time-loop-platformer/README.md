@@ -1,31 +1,42 @@
 # Time-Loop Echo Platformer Prototype
 
-Tiny one-room browser prototype for validating the rewind + echo stack mechanic.
+Tiny one-room prototype for validating a **shared two-character timeline** with hold-to-rewind and branching overwrite.
 
 ## Run
 
 Open [index.html](/Users/andrasgyarmati/repos/used-car-trading-proto/prototypes/time-loop-platformer/index.html) in a browser.
 
-## Core Loop
+## Core Model Implemented
 
-1. Play a run as one character.
-2. Press `R` to rewind and commit that run.
-3. Previous run replays as an echo.
-4. Play next character while echoes replay.
-5. Stack runs and solve the traversal puzzle.
+- Two characters are always in the world:
+  - Thrower
+  - Rope
+- You control one character at a time and can switch anytime (`Q`/`Tab`).
+- Both characters continuously record/replay on a shared frame timeline.
+- Hold `R`: world rewinds backward frame-by-frame (no new interactions triggered).
+- Release `R`: active character track is truncated at that frame and rewrites from there.
+- Non-active character keeps prior recording and replays until it runs out, then records idle frames.
 
-## Data / Replay Model
+## Abilities
 
-- Fixed timestep simulation (`60 Hz`).
-- Each run stores compact per-frame input bitmasks in a `Uint8Array` (grown by doubling when needed).
-- On rewind, world resets to canonical state and replay runs start from frame 0.
-- Echoes are deterministic because they are driven by recorded inputs through the same simulation code as the active run.
+- Thrower: `E` opens a short throw window. If overlapping rope character, rope character gets launch velocity.
+- Rope: `E` near anchor places rope; `E` while overlapping rope instantly climbs to rope top.
+
+## Win Rule
+
+Both characters must be in the exit zone at the same timeline state.
+
+## Data Layout
+
+- Fixed-step simulation (`60 Hz`).
+- Per-character input tracks in `Uint8Array` bitmasks (`left/right/jump/use`).
+- Dynamic capacity doubling for tracks and frame snapshots.
+- Frame snapshots stored in typed arrays for rewind playback and instant state load on branch points.
 
 ## Tweak Points
 
 Edit [app.js](/Users/andrasgyarmati/repos/used-car-trading-proto/prototypes/time-loop-platformer/app.js):
 
-- `LEVEL`: room layout, rope anchor, exit.
-- `CHARACTERS`: movement/jump tuning.
-- `PHYSICS`: gravity and jump buffering.
-- `THROW_*` constants.
+- `LEVEL` layout, anchors, exit.
+- `PHYS` jump/gravity feel.
+- `THROW` boost timings and force.

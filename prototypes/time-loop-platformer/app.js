@@ -605,17 +605,8 @@
   }
 
   function timelineFrameToX(frame, maxFrame, width) {
-    const firstCap = 300;
     if (maxFrame <= 1) return 0;
-    if (maxFrame <= firstCap) {
-      return (frame / maxFrame) * width;
-    }
-    if (frame <= firstCap) {
-      return (frame / firstCap) * (width * 0.75);
-    }
-    const overflow = maxFrame - firstCap;
-    if (overflow <= 0) return width * 0.75;
-    return width * 0.75 + ((frame - firstCap) / overflow) * (width * 0.25);
+    return (frame / maxFrame) * width;
   }
 
   function drawActionMarker(x, y, kind, color) {

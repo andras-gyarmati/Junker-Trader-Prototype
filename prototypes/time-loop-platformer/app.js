@@ -123,6 +123,8 @@
     rewinding: false,
     pendingRewindTap: false,
     rewindDownAtMs: 0,
+    autoReplay: false,
+    autoReplayFrame: 0,
     won: false,
     msg: "Build timeline with both chars. Tap R = instant 1s rewind. Hold R = visual rewind.",
     tracks: [makeTrack(), makeTrack()],
@@ -256,6 +258,8 @@
     state.rewinding = false;
     state.pendingRewindTap = false;
     state.rewindDownAtMs = 0;
+    state.autoReplay = false;
+    state.autoReplayFrame = 0;
     state.won = false;
     state.msg = "Full reset. Create a new shared timeline.";
 
@@ -513,14 +517,29 @@
   }
 
   function checkWinCondition() {
+    const wasWon = state.won;
     const t = state.chars[CHAR.THROWER];
     const r = state.chars[CHAR.ROPE];
     const inA = rectOverlap(t, LEVEL.exit);
     const inB = rectOverlap(r, LEVEL.exit);
     state.won = inA && inB;
-    if (state.won) {
+    if (state.won && !wasWon) {
       state.msg = "Both characters reached exit in same timeline. Level complete.";
+      state.autoReplay = true;
+      state.autoReplayFrame = 0;
     }
+  }
+
+  function stepAutoReplay() {
+    if (!state.autoReplay) return;
+    if (state.autoReplayFrame > state.maxSimFrame) {
+      state.autoReplay = false;
+      state.msg = "Auto replay finished. Press Enter to reset.";
+      return;
+    }
+    state.frame = state.autoReplayFrame;
+    loadSnapshot(state.frame);
+    state.autoReplayFrame += 1;
   }
 
   function stepForward() {
@@ -760,7 +779,7 @@
   function updateUi() {
     const activeName = CHARACTER_DEF[state.activeChar].name;
     statusEl.innerHTML = [
-      `<div class="stat"><strong>Active:</strong> ${activeName} | <strong>Frame:</strong> ${state.frame} | <strong>Rewinding:</strong> ${state.rewinding ? "YES" : "NO"}</div>`,
+      `<div class="stat"><strong>Active:</strong> ${activeName} | <strong>Frame:</strong> ${state.frame} | <strong>Rewinding:</strong> ${state.rewinding ? "YES" : "NO"} | <strong>Auto Replay:</strong> ${state.autoReplay ? "YES" : "NO"}</div>`,
       `<div class="stat"><strong>Win rule:</strong> both characters must overlap exit at same time</div>`,
       `<div class="small">${state.msg}</div>`
     ].join("");
@@ -787,7 +806,9 @@
     }
 
     while (state.accumulator >= DT) {
-      if (state.rewinding) {
+      if (state.autoReplay) {
+        stepAutoReplay();
+      } else if (state.rewinding) {
         stepRewind();
       } else {
         stepForward();
@@ -804,6 +825,10 @@
 
   function onKeyDown(ev) {
     const k = ev.key.toLowerCase();
+
+    if (state.autoReplay && ev.key !== "Enter") {
+      return;
+    }
 
     if (k === "a" || ev.key === "ArrowLeft") KEY.left = true;
     if (k === "d" || ev.key === "ArrowRight") KEY.right = true;

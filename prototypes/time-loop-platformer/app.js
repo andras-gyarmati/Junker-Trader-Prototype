@@ -24,20 +24,20 @@
     {
       id: "thrower",
       name: "Thrower",
-      w: 16,
-      h: 24,
+      w: 12,
+      h: 18,
       maxSpeed: 3.8,
-      jumpVel: -8.2,
+      jumpVel: -6.2,
       color: "#e74c3c",
       ghost: "rgba(231,76,60,0.35)"
     },
     {
       id: "rope",
       name: "Rope",
-      w: 16,
-      h: 24,
+      w: 12,
+      h: 18,
       maxSpeed: 3.8,
-      jumpVel: -8.2,
+      jumpVel: -6.2,
       color: "#8e44ad",
       ghost: "rgba(142,68,173,0.35)"
     }
@@ -143,6 +143,7 @@
     won: false,
     msg: "Build timeline with both chars. Tap R = instant 2s rewind. Hold R = visual rewind.",
     tracks: [makeTrack(), makeTrack()],
+    abandonedFutures: [[], []],
     chars: [makeChar(0), makeChar(1)],
     ropeMask: 0,
     snapshots: {
@@ -281,6 +282,7 @@
 
     for (let c = 0; c < 2; c += 1) {
       state.tracks[c] = makeTrack();
+      state.abandonedFutures[c] = [];
       state.chars[c] = makeChar(c);
     }
 
@@ -617,18 +619,45 @@
     state.msg = "Visual rewind...";
   }
 
+  function archiveOverwrittenFuture(charIdx, fromFrame, toFrameExclusive) {
+    const count = toFrameExclusive - fromFrame;
+    if (count <= 0) return;
+
+    const tr = state.tracks[charIdx];
+    const fragment = {
+      startFrame: fromFrame,
+      endFrame: toFrameExclusive,
+      input: new Uint8Array(count),
+      x: new Float32Array(count),
+      y: new Float32Array(count)
+    };
+
+    for (let i = 0; i < count; i += 1) {
+      const frame = fromFrame + i;
+      const p = idx(frame, charIdx);
+      fragment.input[i] = frame < tr.len ? tr.input[frame] : 0;
+      fragment.x[i] = state.snapshots.x[p];
+      fragment.y[i] = state.snapshots.y[p];
+    }
+
+    state.abandonedFutures[charIdx].push(fragment);
+  }
+
   function endRewindAndBranch(messageOverride) {
     state.rewinding = false;
 
-    const activeTrack = state.tracks[state.activeChar];
-    if (activeTrack.len > state.frame) {
-      activeTrack.len = state.frame;
+    const cutFrame = state.frame;
+    const activeIdx = state.activeChar;
+    const activeTrack = state.tracks[activeIdx];
+    if (activeTrack.len > cutFrame) {
+      archiveOverwrittenFuture(activeIdx, cutFrame, activeTrack.len);
+      activeTrack.len = cutFrame;
     }
 
-    state.maxSimFrame = state.frame;
+    state.maxSimFrame = cutFrame;
     state.msg =
       messageOverride ||
-      `${CHARACTER_DEF[state.activeChar].name} track truncated at frame ${state.frame}. Branching forward.`;
+      `${CHARACTER_DEF[state.activeChar].name} track truncated at frame ${cutFrame}. Old future archived as ghost.`;
   }
 
   function instantRewindAndBranch(frames) {
@@ -775,7 +804,14 @@
 
     const trA = state.tracks[CHAR.THROWER];
     const trB = state.tracks[CHAR.ROPE];
-    const maxFrame = Math.max(state.maxSimFrame, trA.len, trB.len, state.frame + 1, 1);
+    let archivedMax = 0;
+    for (let c = 0; c < 2; c += 1) {
+      const frags = state.abandonedFutures[c];
+      for (let i = 0; i < frags.length; i += 1) {
+        if (frags[i].endFrame > archivedMax) archivedMax = frags[i].endFrame;
+      }
+    }
+    const maxFrame = Math.max(state.maxSimFrame, trA.len, trB.len, state.frame + 1, archivedMax, 1);
     const playX = pad + timelineFrameToX(state.frame, maxFrame, laneW);
 
     function drawLane(charIdx, laneTop) {
@@ -789,6 +825,15 @@
       const lenX = pad + timelineFrameToX(tr.len, maxFrame, laneW);
       tctx.fillStyle = "rgba(50,50,50,0.16)";
       tctx.fillRect(pad, laneTop, Math.max(0, lenX - pad), laneH);
+
+      const frags = state.abandonedFutures[charIdx];
+      tctx.fillStyle = "rgba(30,30,30,0.08)";
+      for (let i = 0; i < frags.length; i += 1) {
+        const f = frags[i];
+        const x1 = pad + timelineFrameToX(f.startFrame, maxFrame, laneW);
+        const x2 = pad + timelineFrameToX(f.endFrame, maxFrame, laneW);
+        tctx.fillRect(x1, laneTop, Math.max(0, x2 - x1), laneH);
+      }
 
       tctx.fillStyle = color;
       tctx.font = "12px monospace";
@@ -811,6 +856,27 @@
           }
         }
         prev = cur;
+      }
+
+      for (let i = 0; i < frags.length; i += 1) {
+        const fragment = frags[i];
+        let prevFrag = 0;
+        for (let j = 0; j < fragment.input.length; j += 1) {
+          const cur = fragment.input[j];
+          const justJump = (cur & INPUT_JUMP) !== 0 && (prevFrag & INPUT_JUMP) === 0;
+          const justUse = (cur & INPUT_USE) !== 0 && (prevFrag & INPUT_USE) === 0;
+          if (justJump || justUse) {
+            const frame = fragment.startFrame + j;
+            const x = pad + timelineFrameToX(frame, maxFrame, laneW);
+            const y = laneTop + laneH * 0.5;
+            if (justJump) drawActionMarker(x, y, "jump", "rgba(60,60,60,0.45)");
+            if (justUse) {
+              if (charIdx === CHAR.THROWER) drawActionMarker(x, y + 10, "throw", "rgba(178,34,34,0.45)");
+              else drawActionMarker(x, y + 10, "rope", "rgba(90,45,145,0.45)");
+            }
+          }
+          prevFrag = cur;
+        }
       }
     }
 
@@ -845,6 +911,17 @@
     }
 
     drawRect(LEVEL.exit.x, LEVEL.exit.y, LEVEL.exit.w, LEVEL.exit.h, "rgba(40,220,90,0.75)");
+
+    for (let c = 0; c < 2; c += 1) {
+      const frags = state.abandonedFutures[c];
+      const d = CHARACTER_DEF[c];
+      for (let i = 0; i < frags.length; i += 1) {
+        const fragment = frags[i];
+        if (state.frame < fragment.startFrame || state.frame >= fragment.endFrame) continue;
+        const local = state.frame - fragment.startFrame;
+        drawRect(fragment.x[local], fragment.y[local], d.w, d.h, "rgba(255,255,255,0.18)");
+      }
+    }
 
     for (let c = 0; c < 2; c += 1) {
       const ch = state.chars[c];

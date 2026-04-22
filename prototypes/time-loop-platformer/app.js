@@ -89,6 +89,17 @@
     rewind: false
   };
 
+  const PAD = {
+    connected: false,
+    left: false,
+    right: false,
+    jump: false,
+    use: false,
+    rewind: false,
+    switchPressedPrev: false,
+    resetPressedPrev: false
+  };
+
   function makeTrack() {
     return {
       len: 0,
@@ -277,12 +288,16 @@
     saveSnapshot(0);
   }
 
+  function isRewindHeld() {
+    return KEY.rewind || PAD.rewind;
+  }
+
   function maskFromKeys() {
     let m = 0;
-    if (KEY.left) m |= INPUT_LEFT;
-    if (KEY.right) m |= INPUT_RIGHT;
-    if (KEY.jump) m |= INPUT_JUMP;
-    if (KEY.use) m |= INPUT_USE;
+    if (KEY.left || PAD.left) m |= INPUT_LEFT;
+    if (KEY.right || PAD.right) m |= INPUT_RIGHT;
+    if (KEY.jump || PAD.jump) m |= INPUT_JUMP;
+    if (KEY.use || PAD.use) m |= INPUT_USE;
     return m;
   }
 
@@ -624,6 +639,93 @@
     endRewindAndBranch(`Instant rewind: ${before} -> ${target}`);
   }
 
+  function handleRewindPress() {
+    state.pendingRewindTap = true;
+    state.rewindDownAtMs = performance.now();
+  }
+
+  function handleRewindRelease() {
+    if (state.rewinding) {
+      endRewindAndBranch();
+    } else if (state.pendingRewindTap) {
+      instantRewindAndBranch(INSTANT_REWIND_FRAMES);
+    }
+    state.pendingRewindTap = false;
+  }
+
+  function switchActiveCharacter() {
+    state.activeChar = state.activeChar === CHAR.THROWER ? CHAR.ROPE : CHAR.THROWER;
+    state.msg = `Switched control to ${CHARACTER_DEF[state.activeChar].name}.`;
+  }
+
+  function canAcceptControlInput() {
+    return !state.autoReplay && !state.sessionEnded;
+  }
+
+  function buttonPressed(gamepad, index) {
+    const b = gamepad.buttons[index];
+    return !!(b && b.pressed);
+  }
+
+  function pollGamepad() {
+    const list = navigator.getGamepads ? navigator.getGamepads() : null;
+    let gp = null;
+    if (list) {
+      for (let i = 0; i < list.length; i += 1) {
+        if (list[i] && list[i].connected) {
+          gp = list[i];
+          break;
+        }
+      }
+    }
+
+    if (!gp) {
+      if (PAD.rewind) {
+        PAD.rewind = false;
+        if (!isRewindHeld()) handleRewindRelease();
+      }
+      PAD.connected = false;
+      PAD.left = false;
+      PAD.right = false;
+      PAD.jump = false;
+      PAD.use = false;
+      PAD.switchPressedPrev = false;
+      PAD.resetPressedPrev = false;
+      return;
+    }
+
+    PAD.connected = true;
+    const ax = gp.axes[0] || 0;
+    const dpadLeft = buttonPressed(gp, 14);
+    const dpadRight = buttonPressed(gp, 15);
+    PAD.left = ax < -0.25 || dpadLeft;
+    PAD.right = ax > 0.25 || dpadRight;
+    PAD.jump = buttonPressed(gp, 0); // A
+    PAD.use = buttonPressed(gp, 2); // X
+
+    const switchNow = buttonPressed(gp, 4) || buttonPressed(gp, 5); // LB/RB
+    if (switchNow && !PAD.switchPressedPrev && canAcceptControlInput()) {
+      switchActiveCharacter();
+    }
+    PAD.switchPressedPrev = switchNow;
+
+    const resetNow = buttonPressed(gp, 9); // Start
+    if (resetNow && !PAD.resetPressedPrev) {
+      resetAll();
+    }
+    PAD.resetPressedPrev = resetNow;
+
+    const rewindNow = buttonPressed(gp, 3); // Y
+    if (rewindNow && !PAD.rewind && canAcceptControlInput()) {
+      const wasHeld = isRewindHeld();
+      PAD.rewind = true;
+      if (!wasHeld) handleRewindPress();
+    } else if (!rewindNow && PAD.rewind) {
+      PAD.rewind = false;
+      if (!isRewindHeld()) handleRewindRelease();
+    }
+  }
+
   function drawRect(x, y, w, h, color) {
     ctx.fillStyle = color;
     ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
@@ -795,7 +897,8 @@
       `<div>Thrower track len: ${state.tracks[0].len}</div>`,
       `<div>Rope track len: ${state.tracks[1].len}</div>`,
       `<div>Rope mask bits: ${state.ropeMask.toString(2).padStart(LEVEL.ropeAnchors.length, "0")}</div>`,
-      `<div>Max frame reached: ${state.maxSimFrame}</div>`
+      `<div>Max frame reached: ${state.maxSimFrame}</div>`,
+      `<div>Controller: ${PAD.connected ? "connected" : "not connected"}</div>`
     ].join("");
   }
 
@@ -805,7 +908,9 @@
     state.lastTs = ts;
     state.accumulator += delta * GAME_SPEED;
 
-    if (KEY.rewind && state.pendingRewindTap && !state.rewinding) {
+    pollGamepad();
+
+    if (isRewindHeld() && state.pendingRewindTap && !state.rewinding) {
       if (ts - state.rewindDownAtMs >= HOLD_REWIND_THRESHOLD_MS) {
         state.pendingRewindTap = false;
         beginVisualRewind();
@@ -839,7 +944,7 @@
   function onKeyDown(ev) {
     const k = ev.key.toLowerCase();
 
-    if ((state.autoReplay || state.sessionEnded) && ev.key !== "Enter") {
+    if (!canAcceptControlInput() && ev.key !== "Enter") {
       return;
     }
 
@@ -850,16 +955,15 @@
 
     if (k === "q" || ev.key === "Tab") {
       ev.preventDefault();
-      state.activeChar = state.activeChar === CHAR.THROWER ? CHAR.ROPE : CHAR.THROWER;
-      state.msg = `Switched control to ${CHARACTER_DEF[state.activeChar].name}.`;
+      switchActiveCharacter();
       return;
     }
 
     if (k === "r") {
       if (!ev.repeat) {
+        const wasHeld = isRewindHeld();
         KEY.rewind = true;
-        state.pendingRewindTap = true;
-        state.rewindDownAtMs = performance.now();
+        if (!wasHeld) handleRewindPress();
       }
       return;
     }
@@ -879,12 +983,7 @@
 
     if (k === "r") {
       KEY.rewind = false;
-      if (state.rewinding) {
-        endRewindAndBranch();
-      } else if (state.pendingRewindTap) {
-        instantRewindAndBranch(INSTANT_REWIND_FRAMES);
-      }
-      state.pendingRewindTap = false;
+      if (!isRewindHeld()) handleRewindRelease();
       return;
     }
   }
